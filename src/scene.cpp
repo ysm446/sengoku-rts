@@ -1,4 +1,5 @@
 #include "scene.h"
+#include "sprite_sheet.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -46,7 +47,7 @@ void makeAtlas(Scene& scene) {
             const int px = cx + x, py = cy + y;
             if (px < 0 || px >= 32 || py < 0 || py >= 48 || std::abs(x) + std::abs(y) > radius + 1) continue;
             const auto shade = hash(static_cast<unsigned>(px + py * 37)) % 3;
-            scene.atlas[py * Scene::atlasWidth + 64 + px] =
+            scene.atlas[py * Scene::atlasWidth + 2 * Scene::tileWidth + px] =
                 shade == 0 ? rgba(66, 89, 50) : shade == 1 ? rgba(49, 73, 44) : rgba(85, 104, 56);
         }
     };
@@ -56,6 +57,14 @@ void makeAtlas(Scene& scene) {
     rect(3, 3, 14, 28, 40, cloth); rect(3, 3, 34, 28, 39, rgba(171, 177, 161));
     rect(3, 14, 14, 16, 40, rgba(190, 186, 163));
     rect(3, 7, 21, 11, 28, ink); rect(3, 20, 21, 24, 28, ink);
+
+    // 既存32x48の仮素材を64x64タイルへ最近傍で展開する。
+    const auto original = scene.atlas;
+    for (unsigned tile = 0; tile < 4; ++tile)
+        for (unsigned y = 0; y < Scene::tileHeight; ++y)
+            for (unsigned x = 0; x < Scene::tileWidth; ++x)
+                scene.atlas[y * Scene::atlasWidth + tile * Scene::tileWidth + x] =
+                    original[(y * 48 / Scene::tileHeight) * Scene::atlasWidth + tile * Scene::tileWidth + x * 32 / Scene::tileWidth];
 }
 }
 
@@ -64,12 +73,28 @@ float terrainHeight(float x, float z) {
         3.6f * std::exp(-((x + 37) * (x + 37) + (z - 25) * (z - 25)) / 330.0f);
 }
 
-Scene makeScene(unsigned soldiers) {
+Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     if (soldiers == 0 || soldiers > 10000 || soldiers % 2 != 0)
         throw std::invalid_argument("Soldier count must be even and between 2 and 10000.");
     Scene scene;
-    scene.soldierCount = soldiers;
+    scene.inspect = options.inspect;
+    scene.headingOffset = static_cast<float>(options.directionOffset % 8) * DirectX::XM_PIDIV4;
+    scene.soldierCount = options.inspect ? 16 : soldiers;
     makeAtlas(scene);
+    if (!options.soldierSheet.empty()) {
+        const auto pixels = loadSpriteSheet(options.soldierSheet, Scene::tileWidth * 8, Scene::tileHeight);
+        for (unsigned y = 0; y < Scene::tileHeight; ++y)
+            std::copy_n(pixels.data() + y * Scene::tileWidth * 8, Scene::tileWidth * 8,
+                        scene.atlas.data() + y * Scene::atlasWidth + Scene::tileWidth * 4);
+        scene.generatedSoldiers = true;
+        if (!options.walkSheet.empty()) {
+            const auto walk = loadSpriteSheet(options.walkSheet, Scene::tileWidth * 8, Scene::tileHeight * Scene::walkFrames);
+            for (unsigned y = 0; y < Scene::tileHeight * Scene::walkFrames; ++y)
+                std::copy_n(walk.data() + y * Scene::tileWidth * 8, Scene::tileWidth * 8,
+                            scene.atlas.data() + (y + Scene::tileHeight) * Scene::atlasWidth + Scene::tileWidth * 4);
+            scene.animatedSoldiers = true;
+        }
+    }
     constexpr int cells = 100;
     for (int z = 0; z < cells; ++z) for (int x = 0; x < cells; ++x) {
         const float wx = static_cast<float>(x) * 1.5f - 75.0f;
@@ -89,14 +114,34 @@ Scene makeScene(unsigned soldiers) {
         scene.sprites.push_back({{x, terrainHeight(x, z) + 0.03f, z}, {w, h}, tile, tint});
     };
     const DirectX::XMFLOAT3 white{1, 1, 1};
+    if (options.inspect) {
+        // Cameraの横方向へ8方向を並べる。左右が方向番号順になる。
+        for (unsigned team = 0; team < 2; ++team) for (unsigned direction = 0; direction < 8; ++direction) {
+            const float horizontal = (static_cast<float>(direction) - 3.5f) * 2.8f;
+            const float depth = team == 0 ? -3.0f : 3.0f;
+            const unsigned tile = scene.generatedSoldiers ? 4 + (direction + options.directionOffset) % 8 : 0;
+            const DirectX::XMFLOAT3 tint = team == 0 ? DirectX::XMFLOAT3{0.85f, 0.34f, 0.25f} : DirectX::XMFLOAT3{0.34f, 0.48f, 0.66f};
+            add((-horizontal + depth) * 0.70710678f, (horizontal + depth) * 0.70710678f,
+                scene.generatedSoldiers ? 3.4f : 1.7f, scene.generatedSoldiers ? 3.4f : 2.7f, tile, tint);
+            scene.soldierBindings.push_back({scene.sprites.size() - 1, team, {},
+                Camera::initialYaw + static_cast<float>(direction) * DirectX::XM_PIDIV4, 0});
+        }
+        return scene;
+    }
     for (unsigned team = 0; team < 2; ++team) {
         const DirectX::XMFLOAT3 tint = team == 0 ? DirectX::XMFLOAT3{0.85f, 0.34f, 0.25f} : DirectX::XMFLOAT3{0.34f, 0.48f, 0.66f};
         const unsigned columns = static_cast<unsigned>(std::ceil(std::sqrt(static_cast<float>(soldiers / 2))));
         const float spacing = std::min(1.2f, 26.0f / static_cast<float>(columns));
         for (unsigned i = 0; i < soldiers / 2; ++i) {
             const float x = (static_cast<float>(i % columns) - static_cast<float>(columns - 1) * 0.5f) * spacing;
-            const float z = (team == 0 ? -18.0f : 18.0f) + (static_cast<float>(i / columns) - static_cast<float>(columns - 1) * 0.5f) * spacing;
-            add(x, z, 1.7f, 2.7f, 0, tint);
+            const float centerZ = team == 0 ? -22.0f : 22.0f;
+            const float offsetZ = (static_cast<float>(i / columns) - static_cast<float>(columns - 1) * 0.5f) * spacing;
+            const float z = centerZ + offsetZ;
+            // 初期の2陣営は互いの側を向く。方向は画面基準の8方向。
+            const unsigned direction = (team == 0 ? 1 : 5) + options.directionOffset;
+            add(x, z, scene.generatedSoldiers ? 3.4f : 1.7f, scene.generatedSoldiers ? 3.4f : 2.7f,
+                scene.generatedSoldiers ? 4 + direction % 8 : 0, tint);
+            scene.soldierBindings.push_back({scene.sprites.size() - 1, team, {x, offsetZ}, 0, i % 8});
         }
         for (int i = 0; i < 6; ++i) {
             add(-14.0f + i * 5.6f, team == 0 ? -33.0f : 33.0f, 2.1f, 5.5f, 1, tint);
@@ -111,4 +156,61 @@ Scene makeScene(unsigned soldiers) {
         add(x, z, h * 0.9f, h, 2, white);
     }
     return scene;
+}
+
+std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& camera,
+    float pixelX, float pixelY, unsigned width, unsigned height) {
+    using namespace DirectX;
+    if (!width || !height || !std::isfinite(pixelX) || !std::isfinite(pixelY) ||
+        pixelX < 0 || pixelY < 0 || pixelX >= width || pixelY >= height) return std::nullopt;
+    const auto inverse = XMMatrixInverse(nullptr, camera.matrix(static_cast<float>(width) / height));
+    const float nx = 2 * pixelX / width - 1, ny = 1 - 2 * pixelY / height;
+    const auto origin = XMVector3TransformCoord(XMVectorSet(nx, ny, 0, 1), inverse);
+    const auto direction = XMVector3Normalize(XMVectorSubtract(
+        XMVector3TransformCoord(XMVectorSet(nx, ny, 1, 1), inverse), origin));
+    float nearest = 300;
+    std::optional<XMFLOAT3> result;
+    // 描画に使う三角形と交差させ、丘でも画面上の位置と一致させる。
+    for (std::size_t i = 0; i + 2 < scene.terrain.size(); i += 3) {
+        const auto a = XMLoadFloat3(&scene.terrain[i].position);
+        const auto e1 = XMVectorSubtract(XMLoadFloat3(&scene.terrain[i + 1].position), a);
+        const auto e2 = XMVectorSubtract(XMLoadFloat3(&scene.terrain[i + 2].position), a);
+        const auto p = XMVector3Cross(direction, e2);
+        const float determinant = XMVectorGetX(XMVector3Dot(e1, p));
+        if (std::abs(determinant) < 0.000001f) continue;
+        const auto offset = XMVectorSubtract(origin, a);
+        const float u = XMVectorGetX(XMVector3Dot(offset, p)) / determinant;
+        const auto q = XMVector3Cross(offset, e1);
+        const float v = XMVectorGetX(XMVector3Dot(direction, q)) / determinant;
+        const float distance = XMVectorGetX(XMVector3Dot(e2, q)) / determinant;
+        if (u < 0 || v < 0 || u + v > 1 || distance < 0 || distance >= nearest) continue;
+        nearest = distance;
+        XMFLOAT3 point;
+        XMStoreFloat3(&point, XMVectorAdd(origin, XMVectorScale(direction, distance)));
+        result = point;
+    }
+    return result;
+}
+
+void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected) {
+    for (const auto& binding : scene.soldierBindings) {
+        auto& sprite = scene.sprites[binding.spriteIndex];
+        const auto& formation = simulation.formations[binding.formation];
+        if (!scene.inspect) {
+            sprite.tint = binding.formation == 0 ? DirectX::XMFLOAT3{0.85f, 0.34f, 0.25f} : DirectX::XMFLOAT3{0.34f, 0.48f, 0.66f};
+            if (static_cast<int>(binding.formation) == selected) {
+                sprite.tint.x = std::min(1.0f, sprite.tint.x + 0.2f);
+                sprite.tint.y += 0.2f; sprite.tint.z += 0.12f;
+            }
+            sprite.position.x = formation.x + binding.offset.x;
+            sprite.position.z = formation.z + binding.offset.y;
+            sprite.position.y = terrainHeight(sprite.position.x, sprite.position.z) + 0.03f;
+        }
+        const float heading = (scene.inspect ? binding.heading : formation.heading) + scene.headingOffset;
+        unsigned frame = 0;
+        const bool walking = scene.inspect ? simulation.time > 0 : formation.moving;
+        if (scene.animatedSoldiers && walking)
+            frame = 1 + (static_cast<unsigned>(std::fmod(simulation.time * 8.0, 8.0)) + binding.phase) % Scene::walkFrames;
+        sprite.tile = scene.generatedSoldiers ? 4 + camera.spriteDirection(heading) + frame * Scene::atlasColumns : 0;
+    }
 }

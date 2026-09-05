@@ -16,6 +16,7 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
     void setScene(const Scene& scene);
+    void updateSprites(const std::vector<SpriteInstance>& sprites);
     void resize(unsigned width, unsigned height);
     void render(const Camera& camera, const std::filesystem::path& capture = {});
     void checkDebugMessages();

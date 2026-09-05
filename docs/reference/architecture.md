@@ -1,7 +1,7 @@
 # 設計概要
 
 作成日時: 2026-09-05 09:53
-更新日時: 2026-09-05 10:13
+更新日時: 2026-09-05 10:53
 
 [技術仕様 Draft 0.1](../戦国合戦シミュレーター%20技術仕様%20Draft%200.1.md)の要約。以下は主に設計上の構成を示す。現在の実装範囲は[開発手順](development.md)と[進捗](../plan/progress.md)を参照する。
 
@@ -12,7 +12,7 @@
 | 実行環境 | Windows、C++、DirectX 12、HLSL。ゲームエンジンは使用しない |
 | 地形 | 山・谷・地面・河川・道路を3Dで扱い、高低差・衝突・ナビゲーション用データを持つ |
 | 描画 | 兵士、旗、木、建物、煙などの2D Spriteを3D空間に配置する |
-| カメラ | 原則固定角度・回転なしのOrthographic Projection。Pan / Zoomに対応し、段階式Zoomは検討対象 |
+| カメラ | Orthographic Projection、俯角固定、水平360度回転、Pan / Zoom。回転は2026-09-05のユーザー希望に基づくDraftからの変更 |
 | シミュレーション | Formation単位で位置・向き・兵力・士気・疲労・隊列などを管理する |
 | シナリオ | 地形・軍勢・イベントを合戦別のデータとして管理する |
 | 素材制作 | BlenderとPythonでモデルからSprite Sheetを生成するオフライン処理 |
@@ -24,6 +24,10 @@ Formationの状態をSoldier Spriteの配置・向き・アニメーションに
 技術仕様のFormation例は`position`、`direction`、`strength`、`morale`、`fatigue`、`cohesion`、`formationType`、`commander`を持つ。描画側のSoldierInstance例は位置とSprite・Animation・Frame・Direction・Teamの識別情報を持つ。正確な型や受け渡し方法は今後設計する。
 
 描画はInstance BufferをGPUへ送り、`DrawIndexedInstanced`などを使用する方針。1,000体から検証を始め、5,000体・10,000体へ測定範囲を広げる。
+
+現在は`src/simulation.cpp`が2つのFormationの位置・向き・移動先・速度を更新する。`updateSceneSprites`が部隊状態から表示兵士の位置・方向・歩行フレームを算出し、RendererはInstance Bufferだけを更新する。表示兵士数を変更してもSimulationの部隊数は変わらない。
+
+水平回転ではCameraの右・上ベクトルをShaderへ渡してSpriteの板を追従させる。兵士のSprite方向は世界方位からCamera方位を引き、最も近い45度単位へ丸める。俯角は素材生成時と同じ約40.316度を保つ。木・旗・陣幕は1方向の仮素材で、カメラ側を向く簡易表現のまま。
 
 ## 戦闘
 

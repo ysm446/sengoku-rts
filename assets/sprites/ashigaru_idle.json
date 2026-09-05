@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "blender": "5.2.1 LTS",
+  "animation": "idle",
+  "tile_size": 64,
+  "directions": 8,
+  "pivot_top_left": [
+    0.5,
+    0.88
+  ],
+  "world_size": 3.4,
+  "camera_elevation_degrees": 40.315542210772584,
+  "direction_order": "0 = front; each next tile rotates model +45 degrees about Blender Z",
+  "opaque_pixels": [
+    370,
+    360,
+    266,
+    292,
+    351,
+    357,
+    257,
+    298
+  ],
+  "palette_levels_per_channel": 16
+}

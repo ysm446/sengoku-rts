@@ -1,5 +1,7 @@
 cbuffer Camera : register(b0) {
     row_major float4x4 viewProjection;
+    float4 cameraRight;
+    float4 cameraUp;
 };
 Texture2D atlas : register(t0);
 SamplerState pointSampler : register(s0);
@@ -38,13 +40,19 @@ SpriteOutput spriteVS(SpriteInput input, uint id : SV_VertexID) {
         float2(1, 1), float2(0, 0), float2(1, 0)
     };
     float2 corner = corners[id];
-    float3 right = float3(-0.70710678, 0, 0.70710678);
+    float3 right = cameraRight.xyz;
     float3 world = input.position + right * ((corner.x - 0.5) * input.size.x);
-    world.y += (1 - corner.y) * input.size.y;
+    if (input.tile >= 4) {
+        // Blender側ですでに俯瞰投影した画像は画面に平行な板へ置く。
+        // Pivotは生成スクリプトと揃え、足元の原点を地形へ接地させる。
+        float3 up = cameraUp.xyz;
+        world += up * ((0.88 - corner.y) * input.size.y);
+    } else world.y += (1 - corner.y) * input.size.y;
     SpriteOutput result;
     result.position = mul(float4(world, 1), viewProjection);
     // 隣のAtlasタイルを拾わないよう半Texel内側に収める。
-    result.uv = float2((input.tile * 32 + 0.5 + corner.x * 31) / 128, (0.5 + corner.y * 47) / 48);
+    result.uv = float2(((input.tile % 12) * 64 + 0.5 + corner.x * 63) / 768,
+                       ((input.tile / 12) * 64 + 0.5 + corner.y * 63) / 576);
     result.tile = input.tile;
     result.tint = input.tint;
     return result;
@@ -53,7 +61,8 @@ float4 spritePS(SpriteOutput input) : SV_TARGET {
     float4 color = atlas.Sample(pointSampler, input.uv);
     clip(color.a - 0.5);
     // 灰色の鎧と明るい旗布だけを陣営色で染める。
-    bool armor = input.tile == 0 && abs(color.r - color.g) < 0.04 && color.r > 0.35;
+    bool armor = (input.tile == 0 || input.tile >= 4) &&
+        max(color.r, max(color.g, color.b)) - min(color.r, min(color.g, color.b)) < 0.04 && color.r > 0.25;
     bool banner = input.tile == 1 && color.r > 0.7;
     if (armor || banner) color.rgb *= input.tint;
     return color;

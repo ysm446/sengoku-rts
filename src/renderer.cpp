@@ -144,7 +144,7 @@ void Renderer::createPipelines(const std::filesystem::path& shader) {
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; range.NumDescriptors = 1;
     D3D12_ROOT_PARAMETER params[2]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants = {0, 0, 16}; params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    params[0].Constants = {0, 0, 24}; params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable = {1, &range}; params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC sampler{};
@@ -237,6 +237,15 @@ void Renderer::setScene(const Scene& scene) {
     device_->CreateShaderResourceView(atlas_.Get(), &srv, srvHeap_->GetCPUDescriptorHandleForHeapStart());
 }
 
+void Renderer::updateSprites(const std::vector<SpriteInstance>& sprites) {
+    if (sprites.size() != spriteCount_) throw std::runtime_error("Sprite count changed without setScene");
+    // render()が毎回Fence完了まで待つため、前フレームとの書き込み競合はない。
+    void* mapped = nullptr; const D3D12_RANGE noRead{0, 0};
+    check(sprites_->Map(0, &noRead, &mapped), "Map dynamic sprites");
+    std::memcpy(mapped, sprites.data(), sprites.size() * sizeof(SpriteInstance));
+    sprites_->Unmap(0, nullptr);
+}
+
 void Renderer::render(const Camera& camera, const std::filesystem::path& capture) {
     check(allocator_->Reset(), "Reset allocator"); check(list_->Reset(allocator_.Get(), terrainPipeline_.Get()), "Reset render list");
     const UINT index = swapChain_->GetCurrentBackBufferIndex();
@@ -255,6 +264,9 @@ void Renderer::render(const Camera& camera, const std::filesystem::path& capture
     DirectX::XMFLOAT4X4 matrix;
     DirectX::XMStoreFloat4x4(&matrix, camera.matrix(static_cast<float>(width_) / static_cast<float>(height_)));
     list_->SetGraphicsRoot32BitConstants(0, 16, &matrix, 0);
+    const auto right = camera.right(), up = camera.up();
+    const float basis[] = {right.x, right.y, right.z, 0, up.x, up.y, up.z, 0};
+    list_->SetGraphicsRoot32BitConstants(0, 8, basis, 16);
     ID3D12DescriptorHeap* heaps[] = {srvHeap_.Get()}; list_->SetDescriptorHeaps(1, heaps);
     list_->SetGraphicsRootDescriptorTable(1, srvHeap_->GetGPUDescriptorHandleForHeapStart());
     list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
