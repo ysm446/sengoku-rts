@@ -301,11 +301,13 @@ int main() {
         battle.toggle(); battle.hold(0); battle.update(1);
         require(battle.formations[0].strength < paused.formations[0].strength, "Hold made engaged formation invulnerable");
         battle.update(60);
-        require(battle.result == BattleResult::RedVictory && battle.formations[1].state == FormationState::Routed,
+        require(battle.result == BattleResult::RedVictory && battle.formations[1].defeated(),
             "Default battle did not finish with a retreat");
         const auto defeated = battle.formations[1];
+        auto withoutOrders = battle;
         battle.move(1, 0, 0); battle.hold(1); battle.update(10);
-        require(battle.formations[1].z == defeated.z && battle.formations[1].targetZ == defeated.targetZ &&
+        withoutOrders.update(10); same(battle, withoutOrders);
+        require(battle.formations[1].targetZ == defeated.targetZ &&
             battle.formations[1].strength == defeated.strength, "Defeated formation obeyed orders or took post-battle losses");
         BattleSimulation thirty, oneFortyFour, single;
         thirty.toggle(); oneFortyFour.toggle(); single.toggle();
@@ -346,6 +348,21 @@ int main() {
             "Rout status followed membership instead of exchanged slots");
         exchanged.result = BattleResult::RedVictory;
         require(exchanged.nearbyRouts(0, 0) == 0, "Finished battle retained active rout pressure");
+        auto physicalShock = isolated;
+        auto& shockFormation = physicalShock.formations[0];
+        auto& shockSource = shockFormation.organization.smallGroups[12];
+        const auto receiver = shockFormation.groupPosition(11);
+        shockSource.fleeX = receiver.x + 8; shockSource.fleeZ = receiver.z;
+        require(physicalShock.nearbyRouts(0, 11) == 1, "Shock excluded its radius boundary");
+        shockSource.fleeX = receiver.x + 8.01f;
+        require(physicalShock.nearbyRouts(0, 11) == 0, "Distant runner affected its old neighboring slot");
+        shockSource.fleeX = receiver.x + 6; shockSource.fleeZ = receiver.z + 6;
+        require(physicalShock.nearbyRouts(0, 11) == 0, "Shock used rectangular rather than radial distance");
+        const auto distantSlot = shockFormation.groupPosition(0);
+        shockSource.fleeX = distantSlot.x + 6; shockSource.fleeZ = distantSlot.z;
+        require(physicalShock.nearbyRouts(0, 0) == 1, "Nearby runner ignored a different original slot");
+        shockFormation.organization.smallGroups[0].approachX = -10;
+        require(physicalShock.nearbyRouts(0, 0) == 0, "Shock ignored the receiver's approach displacement");
         const auto isolatedPause = isolated;
         isolated.toggle(); isolated.update(5); same(isolated, isolatedPause);
         isolated.toggle(); isolated.update(1);

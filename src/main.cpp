@@ -95,6 +95,9 @@ struct WindowState {
             std::to_wstring(nearby * 6) + L"/秒]";
         else if (group.routed && group.routShock > 0 && simulation.result == BattleResult::Ongoing)
             text += L" [動揺源:残り" + std::to_wstring(static_cast<int>(std::ceil(group.routShock))) + L"秒]";
+        if (nearby > 0) text += L" [水色:周囲の範囲 橙:動揺源]";
+        else if (group.routed && group.routShock > 0 && simulation.result == BattleResult::Ongoing)
+            text += L" [黄:影響範囲 橙:影響先]";
         text += L" 第" + std::to_wstring(company.troop + 1) + L"隊 第" + std::to_wstring(group.company + 1) +
             L"組 小組" + std::to_wstring(selectedGroup + 1);
         const wchar_t* action = group.state == SmallGroupState::Fleeing ? (group.fleeBlocked ? L"敗走中・退路閉塞" : L"敗走中") :
@@ -104,6 +107,22 @@ struct WindowState {
             group.canAttack && simulation.result == BattleResult::Ongoing ? L"攻撃" : group.state == SmallGroupState::Engaged ? L"接敵" : group.state == SmallGroupState::Retreating ? L"撤退" :
             group.state == SmallGroupState::Advancing ? L"前進" : L"待機";
         text += L" " + std::wstring(action);
+        const auto fronts = simulation.contactFronts(static_cast<unsigned>(selected), static_cast<unsigned>(selectedGroup));
+        float totalWidth = 0;
+        for (const auto& face : fronts.faces) totalWidth += face.width();
+        if (totalWidth > 0) {
+            const auto allocation = allocateContactFronts(fronts, group.strength);
+            const auto decimal = [](float value) {
+                const int tenths = static_cast<int>(std::round(value * 10));
+                return std::to_wstring(tenths / 10) + L"." + std::to_wstring(tenths % 10);
+            };
+            const wchar_t* names[] = {L"前", L"右", L"後", L"左"};
+            text += L" [幅/参加案";
+            for (unsigned face = 0; face < 4; ++face) if (fronts.faces[face].width() > 0) {
+                text += std::wstring(L" ") + names[face] + decimal(fronts.faces[face].width()) + L"/" + decimal(allocation.faces[face].fighters()) + L"人";
+            }
+            text += L" 予備案" + decimal(allocation.reserve) + L"人]";
+        }
         if (simulation.result == BattleResult::Ongoing && !group.routed && !group.canAttack && group.route == SmallGroupRoute::None && !simulation.formations[static_cast<unsigned>(selected)].defeated()) {
             const wchar_t* reason = group.combatWait == CombatWait::NoTarget ? L"近くに攻撃対象なし" :
                 group.combatWait == CombatWait::OutOfRange ? L"射程外" :
@@ -474,8 +493,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             observedCombat |= state.simulation.formations[0].state == FormationState::Engaged;
             observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
             if (options.combatTest && !observedLocalRout && state.simulation.result == BattleResult::Ongoing)
-                for (const auto& f : state.simulation.formations) if (f.routedGroups() > 0 && !f.defeated()) {
-                    observedLocalRout = true; routCaptureFrame = frame + 3;
+                for (unsigned team = 0; team < 2; ++team) if (state.simulation.formations[team].routedGroups() > 0 && !state.simulation.formations[team].defeated()) {
+                    observedLocalRout = true; routCaptureFrame = frame;
+                    for (unsigned id = 0; id < 25; ++id) if (state.simulation.formations[team].organization.smallGroups[id].routed &&
+                        state.simulation.formations[team].organization.smallGroups[id].routShock > 0) {
+                        state.selected = static_cast<int>(team); state.selectedGroup = static_cast<int>(id); break;
+                    }
                 }
             auto visualSimulation = state.simulation;
             if (state.inspect) visualSimulation.time = state.inspectTime;

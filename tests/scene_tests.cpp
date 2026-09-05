@@ -413,6 +413,32 @@ int wmain(int argc, wchar_t** argv) {
         }
         require(runners == 0 && fighters > 0 && localRout.formations[0].organization.smallGroups[22].fleeBlocked,
             "Blocked rout walked through its rear line or stopped the whole army");
+        auto markedScene = makeScene(1000);
+        const auto spriteCount = markedScene.sprites.size();
+        const auto markerCount = [&]() {
+            unsigned count = 0;
+            for (std::size_t i = markedScene.routMarkerStart; i < markedScene.sprites.size(); ++i)
+                count += markedScene.sprites[i].tile == 12;
+            return count;
+        };
+        updateSceneSprites(markedScene, localRout, camera, 0, 22);
+        unsigned affected = 0;
+        for (unsigned id = 0; id < 25; ++id) affected += localRout.routInfluences(0, 22, id);
+        require(markerCount() == 96 + affected * 12, "Rout range markers disagree with combat influence");
+        const auto dot = markedScene.sprites[markedScene.routMarkerStart];
+        require(std::abs(battleDistance({dot.position.x, dot.position.z}, localRout.formations[0].groupPosition(22)) - BattleSimulation::routRadius) < 0.001f,
+            "Rout range marker uses the wrong world radius");
+        updateSceneSprites(markedScene, localRout, camera, 0, 17);
+        require(markerCount() == 96 + localRout.nearbyRouts(0, 17) * 12, "Receiver markers omitted a shock source");
+        updateSceneSprites(markedScene, localRout, camera);
+        require(markerCount() == 0 && markedScene.sprites.size() == spriteCount, "Deselection left markers or changed GPU capacity");
+        auto expiredRout = localRout;
+        expiredRout.formations[0].organization.smallGroups[22].routShock = 0;
+        updateSceneSprites(markedScene, expiredRout, camera, 0, 22);
+        require(markerCount() == 0, "Expired shock kept its range markers");
+        expiredRout = localRout; expiredRout.result = BattleResult::RedVictory;
+        updateSceneSprites(markedScene, expiredRout, camera, 0, 22);
+        require(markerCount() == 0, "Finished battle kept its range markers");
         for (unsigned id : {2u, 7u, 12u, 17u}) localRout.formations[0].organization.smallGroups[id].offsetX = 100;
         localRout.update(0.1f); routVisuals.update(localRout);
         for (unsigned id = 0; id < SoldierVisuals::perTeam; ++id) {

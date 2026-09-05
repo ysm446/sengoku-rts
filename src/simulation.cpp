@@ -553,14 +553,31 @@ void BattleSimulation::step(float seconds) {
         if (actualLoss > 0) f.cohesion = std::max(0.0f, f.cohesion - 1.5f * seconds - actualLoss * 0.08f);
     }
 }
+ContactFronts BattleSimulation::contactFronts(unsigned team, unsigned group) const {
+    (void)formations.at(team).organization.smallGroups.at(group);
+    if (result != BattleResult::Ongoing) return {};
+    std::array<std::array<ContactBody, 25>, 2> bodies{};
+    for (unsigned t = 0; t < 2; ++t) for (unsigned id = 0; id < 25; ++id) {
+        const auto& g = formations[t].organization.smallGroups[id];
+        bodies[t][id] = {formations[t].groupPosition(id), g.heading, g.strength > 0, g.strength > 0 && !g.routed};
+    }
+    return measureContactFronts(bodies, team, group);
+}
+bool BattleSimulation::routInfluences(unsigned team, unsigned source, unsigned target) const {
+    const auto& f = formations.at(team);
+    const auto& a = f.organization.smallGroups.at(source);
+    const auto& b = f.organization.smallGroups.at(target);
+    return result == BattleResult::Ongoing && a.routed && a.routShock > 0 && !b.routed &&
+        battleDistance(f.groupPosition(source), f.groupPosition(target)) <= routRadius;
+}
 unsigned BattleSimulation::nearbyRouts(unsigned team, unsigned group) const {
     const auto& groups = formations.at(team).organization.smallGroups;
     const auto& target = groups.at(group);
     if (result != BattleResult::Ongoing || target.routed) return 0;
     unsigned count = 0;
-    for (const auto& source : groups) if (source.routed && source.routShock > 0 &&
-        std::abs(static_cast<int>(source.slot % 5) - static_cast<int>(target.slot % 5)) <= 1 &&
-        std::abs(static_cast<int>(source.slot / 5) - static_cast<int>(target.slot / 5)) <= 1) ++count;
+    for (unsigned id = 0; id < groups.size(); ++id) {
+        if (routInfluences(team, id, group)) ++count;
+    }
     return count;
 }
 void BattleSimulation::updateRouts(float seconds) {
@@ -569,7 +586,7 @@ void BattleSimulation::updateRouts(float seconds) {
     for (unsigned team = 0; team < 2; ++team) {
         auto& f = formations[team];
         const auto& enemy = formations[1 - team];
-        // 刻みの開始時に崩れていた区画だけを参照し、同じ刻みで連鎖を再帰させない。
+        // 刻みの開始時の敗走者と実位置だけを参照し、同じ刻みで連鎖を再帰させない。
         std::array<unsigned, 25> nearbyCounts{};
         for (unsigned id = 0; id < 25; ++id) nearbyCounts[id] = nearbyRouts(team, id);
         for (auto& g : f.organization.smallGroups) {

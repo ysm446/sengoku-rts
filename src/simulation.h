@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "organization.h"
 #include "combat_geometry.h"
+#include "contact_fronts.h"
 
 enum class FormationState { Idle, Marching, Engaged, Retreating, Routed };
 enum class BattleResult { Ongoing, RedVictory, BlueVictory, Draw };
@@ -49,6 +50,9 @@ public:
     void move(unsigned index, float x, float z);
     void hold(unsigned index);
     unsigned nearbyRouts(unsigned team, unsigned group) const;
+    static constexpr float routRadius = 8.0f;
+    bool routInfluences(unsigned team, unsigned source, unsigned target) const;
+    ContactFronts contactFronts(unsigned team, unsigned group) const;
     void toggle() { running = !running; }
     bool running = false;
     double time = 0;

@@ -65,6 +65,9 @@ void makeAtlas(Scene& scene) {
             for (unsigned x = 0; x < Scene::tileWidth; ++x)
                 scene.atlas[y * Scene::atlasWidth + tile * Scene::tileWidth + x] =
                     original[(y * 48 / Scene::tileHeight) * Scene::atlasWidth + tile * Scene::tileWidth + x * 32 / Scene::tileWidth];
+    // 空きタイル12を地表の点、13を非表示用の透明タイルとして使う。
+    for (unsigned y = 12; y < 52; ++y) for (unsigned x = 12; x < 52; ++x)
+        scene.atlas[(Scene::tileHeight + y) * Scene::atlasWidth + x] = rgba(255, 255, 255);
 }
 }
 
@@ -163,6 +166,8 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
         const float h = 6.0f + static_cast<float>(hash(i + 15) % 30) / 10.0f;
         add(x, z, h * 0.9f, h, 2, white);
     }
+    scene.routMarkerStart = scene.sprites.size();
+    for (unsigned i = 0; i < Scene::routMarkerCount; ++i) add(0, 0, 0.5f, 0.5f, 13, white);
     return scene;
 }
 
@@ -201,6 +206,33 @@ std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& c
 }
 
 void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected, int selectedGroup) {
+    if (!scene.inspect) {
+        for (unsigned i = 0; i < Scene::routMarkerCount; ++i) scene.sprites[scene.routMarkerStart + i].tile = 13;
+        if (selected >= 0 && selected < 2 && selectedGroup >= 0 && selectedGroup < 25 && simulation.result == BattleResult::Ongoing) {
+            const auto& f = simulation.formations[selected];
+            const auto& group = f.organization.smallGroups[selectedGroup];
+            const bool source = group.routed && group.routShock > 0;
+            const bool receiver = simulation.nearbyRouts(selected, selectedGroup) > 0;
+            unsigned marker = 0;
+            const auto circle = [&](BattlePoint center, float radius, unsigned points, DirectX::XMFLOAT3 tint) {
+                for (unsigned i = 0; i < points; ++i) {
+                    const float angle = DirectX::XM_2PI * i / points;
+                    const float x = center.x + radius * std::cos(angle), z = center.z + radius * std::sin(angle);
+                    auto& dot = scene.sprites[scene.routMarkerStart + marker++];
+                    dot.position = {x, terrainHeight(x, z) + 0.09f, z};
+                    dot.size = {0.55f, 0.55f}; dot.tile = 12; dot.tint = tint;
+                    dot.rightAxis = {1, 0, 0}; dot.upAxis = {0, 0, 1};
+                }
+            };
+            if (source || receiver) {
+                circle(f.groupPosition(selectedGroup), BattleSimulation::routRadius, 96, source ?
+                    DirectX::XMFLOAT3{1, 0.85f, 0.15f} : DirectX::XMFLOAT3{0.2f, 0.9f, 1});
+                for (unsigned id = 0; id < 25; ++id) if (source ? simulation.routInfluences(selected, selectedGroup, id) :
+                    simulation.routInfluences(selected, id, selectedGroup))
+                    circle(f.groupPosition(id), 2.4f, 12, {1, 0.45f, 0.1f});
+            }
+        }
+    }
     if (!scene.inspect) scene.individuals->update(simulation);
     for (const auto& binding : scene.soldierBindings) {
         auto& sprite = scene.sprites[binding.spriteIndex];
