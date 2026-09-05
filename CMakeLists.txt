@@ -10,13 +10,13 @@ configure_file(src/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/app.rc" PROPERTIES
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/sengoku-rts-v2.ico")
 
-add_library(sengoku_scene src/scene.cpp src/sprite_sheet.cpp src/simulation.cpp src/soldier_visuals.cpp src/audio.cpp)
-target_link_libraries(sengoku_scene PUBLIC windowscodecs ole32 xaudio2)
+add_library(sengoku_scene src/scene.cpp src/sprite_sheet.cpp src/simulation.cpp src/soldier_visuals.cpp src/audio.cpp src/historical_scenario.cpp src/historical_scene.cpp)
+target_link_libraries(sengoku_scene PUBLIC windowscodecs ole32 xaudio2 gdi32)
 target_include_directories(sengoku_scene PUBLIC src)
 target_compile_features(sengoku_scene PUBLIC cxx_std_20)
 target_compile_definitions(sengoku_scene PUBLIC UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
-add_executable(sengoku_rts WIN32 src/main.cpp src/renderer.cpp "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
+add_executable(sengoku_rts WIN32 src/main.cpp src/renderer.cpp src/historical_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 target_link_libraries(sengoku_rts PRIVATE sengoku_scene d3d12 dxgi d3dcompiler shell32)
 add_custom_command(TARGET sengoku_rts POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:sengoku_rts>/shaders"
@@ -47,6 +47,11 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(historical_tests tests/historical_tests.cpp)
+    target_link_libraries(historical_tests PRIVATE sengoku_scene)
+    add_test(NAME historical_scenario COMMAND historical_tests)
+    add_test(NAME dx12_sekigahara COMMAND sengoku_rts --sekigahara --smoke-test --capture "${CMAKE_BINARY_DIR}/sekigahara.bmp")
+    set_tests_properties(dx12_sekigahara PROPERTIES TIMEOUT 60)
     add_executable(contact_fronts_tests tests/contact_fronts_tests.cpp)
     target_link_libraries(contact_fronts_tests PRIVATE sengoku_scene)
     add_test(NAME contact_fronts COMMAND contact_fronts_tests)

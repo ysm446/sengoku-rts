@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "audio.h"
 #include "resource.h"
+#include "historical_window.h"
 #include <shellapi.h>
 #include <windowsx.h>
 #include <chrono>
@@ -242,6 +243,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 
 struct Options {
+    bool historical = false;
     bool smoke = false, warp = false, inspect = false, placeholder = false;
     bool march = false, motionTest = false, combatTest = false, inspectAttack = false;
     float yawDegrees = 0;
@@ -253,10 +255,13 @@ Options parseOptions() {
     int count = 0;
     auto* args = CommandLineToArgvW(GetCommandLineW(), &count);
     if (!args) throw std::runtime_error("CommandLineToArgvW failed");
+    options.historical = count == 1;
     try {
         for (int i = 1; i < count; ++i) {
             const std::wstring arg = args[i];
             if (arg == L"--smoke-test") options.smoke = true;
+            else if (arg == L"--sekigahara") options.historical = true;
+            else if (arg == L"--battle") options.historical = false;
             else if (arg == L"--warp") options.warp = true;
             else if (arg == L"--inspect") options.inspect = true;
             else if (arg == L"--inspect-attack") { options.inspect = true; options.inspectAttack = true; options.march = true; }
@@ -297,6 +302,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     HWND window = nullptr;
     try {
         options = parseOptions();
+        if (options.historical) {
+            const int result = runHistoricalDemo(instance, show, options.smoke, options.warp, options.capture, executableDirectory(), options.yawDegrees);
+            if (result != 2) return result;
+        }
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         WindowState state; state.requestedSoldiers = options.soldiers;
         if (!options.smoke) {

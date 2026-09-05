@@ -1,6 +1,6 @@
 # 戦国合戦シミュレーター
 
-C++ / DirectX 12によるWindows向けの俯瞰型合戦シミュレーター。現在は、3D地形と仮の2D Spriteを表示するVisual Prototypeです。
+C++ / DirectX 12によるWindows向けの俯瞰型合戦シミュレーター。関ヶ原の時系列デモと、2部隊の戦闘シミュレーションを実装しています。
 
 ## ビルド・起動
 
@@ -12,6 +12,10 @@ $buildScript = Join-Path (Get-Location).Path 'tools/build.ps1'
 $appPath = Join-Path (Get-Location).Path 'build/Release/sengoku_rts.exe'
 & $appPath
 ```
+
+通常起動は関ヶ原の史実再生デモです。再生ボタン、時間スライダー、右側の局面一覧で戦況を観察できます。模式地形・推定経路による初版で、史実の厳密再現ではありません。WASDで移動、ホイールで拡大縮小、Q/E・中ドラッグで回転。Spaceで再生・停止、←/→で10分移動、Homeで初期時刻、Rで全景、Escで終了します。[デモの仕様と出典](docs/reference/sekigahara_demo.md)を参照してください。
+
+右上の「戦闘試作へ」、または起動引数 `--battle` で従来の戦闘試作を開きます。以下は戦闘試作での操作です。
 
 WASD / 矢印で移動、ホイールで拡大縮小、Rでカメラを初期化、1 / 2 / 3で兵士数を1,000 / 5,000 / 10,000体に切り替えます。Escで終了します。
 
