@@ -107,7 +107,8 @@ int wmain(int argc, wchar_t** argv) {
         require(std::isfinite(camera.yaw) && std::abs(camera.yaw) <= DirectX::XM_PI, "Yaw wrap failed");
 
         BattleSimulation simulation;
-        simulation.move(0, 0, -15); simulation.move(1, 0, 15);
+        simulation.formations[1].x = 50;
+        simulation.move(0, 0, -15); simulation.move(1, 50, 15);
         simulation.update(1);
         require(simulation.time == 0 && simulation.formations[0].z == -22, "Paused simulation moved");
         simulation.toggle(); simulation.update(1);
@@ -211,7 +212,8 @@ int wmain(int argc, wchar_t** argv) {
         }
         require(poses.size() == 8, "Walk does not contain eight distinct poses");
         camera = Camera{};
-        simulation.move(0, 0, -15); simulation.move(1, 0, 15);
+        // 到着表示だけを検証するため、局所接敵が始まらない外側へ移動する。
+        simulation.move(0, 0, -30); simulation.move(1, 0, 30);
         simulation.toggle(); simulation.update(0.125f);
         updateSceneSprites(movingScene, simulation, camera);
         const auto beforeOrbit = movingScene.sprites[0];
@@ -232,7 +234,8 @@ int wmain(int argc, wchar_t** argv) {
         for (unsigned count : {1000u, 5000u, 10000u}) {
             auto casualtyScene = makeScene(count);
             BattleSimulation losses;
-            losses.formations[0].strength = 250;
+            losses.formations[0].strength = 450;
+            for (unsigned g = 20; g < 25; ++g) losses.formations[0].organization.smallGroups[g].strength = 10;
             losses.formations[0].cohesion = 30;
             losses.formations[0].z = -14; losses.formations[1].z = 14;
             losses.formations[0].state = losses.formations[1].state = FormationState::Engaged;
@@ -271,7 +274,8 @@ int wmain(int argc, wchar_t** argv) {
             "Individuals move as one rigid formation");
         require(individual0.walking && individual10.walking && individual0.animationTime != individual10.animationTime,
             "Individual walk clocks are not independent");
-        individualsBattle.formations[0].strength = 250;
+        individualsBattle.formations[0].strength = 450;
+        for (unsigned g = 20; g < 25; ++g) individualsBattle.formations[0].organization.smallGroups[g].strength = 10;
         individualsBattle.update(6);
         updateSceneSprites(individualsScene, individualsBattle, Camera{});
         std::size_t casualty = 0;
@@ -309,22 +313,47 @@ int wmain(int argc, wchar_t** argv) {
                 f.x = f.targetX = direction.x * sign * 14;
                 f.z = f.targetZ = direction.y * sign * 14;
                 f.state = FormationState::Engaged;
-                f.strength = 499;
+                const float forwardX = direction.x * (team == 0 ? 1 : -1);
+                const float forwardZ = direction.y * (team == 0 ? 1 : -1);
+                const unsigned hurtGroup = forwardX > 0 ? 14 : forwardX < 0 ? 10 : forwardZ > 0 ? 22 : 2;
+                unsigned members = 0;
+                for (unsigned id = 0; id < SoldierVisuals::perTeam; ++id)
+                    members += Organization::groupForSoldier(id) == hurtGroup;
+                f.organization.smallGroups[hurtGroup].strength = 20 * (1 - 3.5f / members);
+                f.strength = 480 + f.organization.smallGroups[hurtGroup].strength;
             }
             SoldierVisuals frontVisuals;
             frontVisuals.update(frontBattle);
             for (auto& soldier : frontVisuals.soldiers) soldier.animationTime = 0;
             frontBattle.time = 0.1; frontVisuals.update(frontBattle);
+            require(frontVisuals.impacts[0] == 0 && frontVisuals.impacts[1] == 0,
+                "Impact event was emitted before the thrust reached its target");
             std::vector<bool> hitTargets(frontVisuals.soldiers.size(), false);
             for (const auto& soldier : frontVisuals.soldiers) {
                 require(soldier.life == SoldierLife::Alive, "Soldier died before spear impact");
                 if (soldier.attacking) hitTargets[static_cast<unsigned>(soldier.attackTarget)] = true;
+            }
+            std::array<unsigned, 2> expectedDeaths{};
+            for (unsigned i = 0; i < frontVisuals.soldiers.size(); ++i) {
+                const auto& soldier = frontVisuals.soldiers[i];
+                const unsigned team = i / SoldierVisuals::perTeam;
+                if (hitTargets[i] && soldier.attacking &&
+                    frontBattle.formations[team].organization.smallGroups[soldier.smallGroup].strength < 20)
+                    ++expectedDeaths[team];
+            }
+            for (auto& count : expectedDeaths) {
+                require(count > 0, "Injured group has no reachable impact target");
+                count = std::min(count, 3u);
             }
             // 同じ時刻での再描画では命中も動作時計も進めない。
             frontVisuals.update(frontBattle);
             for (const auto& soldier : frontVisuals.soldiers)
                 require(soldier.life == SoldierLife::Alive, "Redraw generated a hit");
             frontBattle.time = 1; frontVisuals.update(frontBattle);
+            require(frontVisuals.impacts[0] > 0 && frontVisuals.impacts[1] > 0, "Spear impact did not emit audio event");
+            const auto impactCounts = frontVisuals.impacts;
+            frontVisuals.update(frontBattle);
+            require(frontVisuals.impacts == impactCounts, "Redraw duplicated impact events");
             unsigned dead = 0;
             for (unsigned i = 0; i < frontVisuals.soldiers.size(); ++i) {
                 const auto& soldier = frontVisuals.soldiers[i];
@@ -333,17 +362,81 @@ int wmain(int argc, wchar_t** argv) {
                 ++dead;
                 const unsigned team = i / SoldierVisuals::perTeam;
                 const auto& f = frontBattle.formations[team];
+                require(f.organization.smallGroups[soldier.smallGroup].strength < 20,
+                    "Damage was transferred to an unharmed small group");
                 const float sign = team == 0 ? 1.0f : -1.0f;
                 require(((soldier.position.x - f.x) * direction.x + (soldier.position.z - f.z) * direction.y) * sign > 12,
                     "Casualty selection ignored the enemy direction");
             }
-            require(dead == 20, "Contacting front did not receive both teams' losses");
+            require(dead == expectedDeaths[0] + expectedDeaths[1], "Small-group loss budgets were not respected");
+            for (unsigned step = 0; step < 20; ++step) {
+                frontBattle.time += 0.1; frontVisuals.update(frontBattle);
+            }
+            std::array<unsigned, 2> accumulatedDeaths{};
+            for (unsigned i = 0; i < frontVisuals.soldiers.size(); ++i) {
+                const auto& soldier = frontVisuals.soldiers[i];
+                if (soldier.life == SoldierLife::Alive) continue;
+                const unsigned team = i / SoldierVisuals::perTeam;
+                require(frontBattle.formations[team].organization.smallGroups[soldier.smallGroup].strength < 20,
+                    "Repeated impacts transferred damage to an unharmed group");
+                ++accumulatedDeaths[team];
+            }
+            require(accumulatedDeaths[0] <= 3 && accumulatedDeaths[1] <= 3,
+                "Repeated impacts exceeded a small-group loss budget");
+            dead = accumulatedDeaths[0] + accumulatedDeaths[1];
             frontBattle.formations[1].x += 100;
             frontBattle.formations[0].strength = 250;
+            for (auto& group : frontBattle.formations[0].organization.smallGroups) group.strength = 10;
             frontBattle.time += 10; frontVisuals.update(frontBattle);
             unsigned afterSeparation = 0;
             for (const auto& soldier : frontVisuals.soldiers) afterSeparation += soldier.life != SoldierLife::Alive;
             require(afterSeparation == dead, "Distant enemy caused rear casualties");
+        }
+        BattleSimulation exchanged;
+        BattleSimulation localRout;
+        for (unsigned team = 0; team < 2; ++team) {
+            auto& f = localRout.formations[team];
+            f.z = f.targetZ = team == 0 ? -14.0f : 14.0f;
+            f.maneuverEnabled = false;
+        }
+        localRout.formations[0].organization.smallGroups[22].morale = 20;
+        SoldierVisuals routVisuals;
+        routVisuals.update(localRout);
+        localRout.toggle(); localRout.update(0.1f); routVisuals.update(localRout);
+        unsigned runners = 0, fighters = 0;
+        for (unsigned id = 0; id < SoldierVisuals::perTeam; ++id) {
+            const auto& s = routVisuals.soldiers[id];
+            if (s.smallGroup == 22) {
+                require(!s.attacking && s.attackTarget == -1, "Fleeing soldier kept attacking");
+                runners += s.walking;
+            } else fighters += s.attacking;
+        }
+        require(runners == 0 && fighters > 0 && localRout.formations[0].organization.smallGroups[22].fleeBlocked,
+            "Blocked rout walked through its rear line or stopped the whole army");
+        for (unsigned id : {2u, 7u, 12u, 17u}) localRout.formations[0].organization.smallGroups[id].offsetX = 100;
+        localRout.update(0.1f); routVisuals.update(localRout);
+        for (unsigned id = 0; id < SoldierVisuals::perTeam; ++id) {
+            const auto& soldier = routVisuals.soldiers[id];
+            if (soldier.smallGroup == 22 && soldier.walking) ++runners;
+        }
+        require(runners > 0 && !localRout.formations[0].organization.smallGroups[22].fleeBlocked,
+            "Opened retreat path did not restart walking");
+        auto& exchangedGroups = exchanged.formations[0].organization.smallGroups;
+        exchangedGroups[20].offsetZ = -5.2f;
+        exchangedGroups[15].offsetZ = 5.2f;
+        SoldierVisuals exchangedVisuals;
+        exchangedVisuals.update(exchanged);
+        const auto beforeExchange = exchangedVisuals.soldiers;
+        std::swap(exchangedGroups[20].slot, exchangedGroups[15].slot);
+        exchangedGroups[20].offsetZ = exchangedGroups[15].offsetZ = 0;
+        exchanged.time = 1;
+        exchangedVisuals.update(exchanged);
+        for (unsigned i = 0; i < exchangedVisuals.soldiers.size(); ++i) {
+            const auto& s = exchangedVisuals.soldiers[i];
+            const auto& old = beforeExchange[i];
+            require(s.smallGroup == old.smallGroup && s.life == old.life &&
+                std::abs(s.position.x - old.position.x) < 0.0001f && std::abs(s.position.z - old.position.z) < 0.0001f,
+                "Slot exchange changed soldier identity or teleported a soldier");
         }
         auto meleeScene = makeScene(10000, walkingOptions);
         BattleSimulation meleeBattle;

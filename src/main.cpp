@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "audio.h"
 #include "resource.h"
 #include <shellapi.h>
 #include <windowsx.h>
@@ -21,7 +22,14 @@ std::wstring battleStatus(const BattleSimulation& simulation) {
         const wchar_t* state = f.state == FormationState::Engaged ? L"交戦" : f.state == FormationState::Retreating ? L"撤退中" :
             f.state == FormationState::Routed ? L"敗走済" : f.state == FormationState::Marching ? L"進軍" : L"待機";
         text += std::wstring(i == 0 ? L" | 赤 " : L" | 青 ") + state + L" 兵力" + std::to_wstring(static_cast<int>(std::ceil(f.strength))) +
-            L" 士気" + std::to_wstring(static_cast<int>(f.morale)) + L" 隊列" + std::to_wstring(static_cast<int>(f.cohesion));
+            L" 士気" + std::to_wstring(static_cast<int>(f.morale)) + L" 隊列" + std::to_wstring(static_cast<int>(f.cohesion)) +
+            L" 敗走" + std::to_wstring(f.routedGroups()) + L"/25小組";
+        unsigned shaken = 0;
+        for (unsigned id = 0; id < f.organization.smallGroups.size(); ++id)
+            shaken += simulation.nearbyRouts(i, id) > 0;
+        text += L" 動揺" + std::to_wstring(shaken) + L"小組";
+        if (f.movementBlocked) text += L" [備の進路閉塞]";
+        else if (f.detouring) text += L" [備の迂回中]";
     }
     return text;
 }
@@ -36,6 +44,12 @@ struct WindowState {
     BattleSimulation simulation;
     const Scene* scene = nullptr;
     int selected = -1;
+    int selectedGroup = -1;
+    bool muted = false;
+    AudioSettings audioSettings;
+    std::filesystem::path audioSettingsPath;
+    bool audioSaveFailed = false;
+    BattleAudio* audio = nullptr;
     void click(int x, int y, bool move) {
         if (inspect || rotating || !scene) return;
         const auto point = pickTerrain(*scene, camera, static_cast<float>(x), static_cast<float>(y), width, height);
@@ -43,9 +57,23 @@ struct WindowState {
             if (point && selected >= 0) simulation.move(static_cast<unsigned>(selected), point->x, point->z);
             return;
         }
-        selected = -1;
+        selected = selectedGroup = -1;
         float nearest = 1000;
         if (!point) return;
+        // 本隊の範囲より先に、移動中の各小組の現在位置を調べる。
+        for (unsigned team = 0; team < simulation.formations.size(); ++team) {
+            const auto& f = simulation.formations[team];
+            for (unsigned id = 0; id < f.organization.smallGroups.size(); ++id) {
+                const auto& g = f.organization.smallGroups[id];
+                const float dx = point->x - (f.x + (static_cast<float>(id % 5) - 2) * 5.2f + g.displacementX(id));
+                const float dz = point->z - (f.z + (static_cast<float>(id / 5) - 2) * 5.2f + g.displacementZ(id));
+                const float distance = std::hypot(dx, dz);
+                if (std::abs(dx) <= 2.6f && std::abs(dz) <= 2.6f && distance < nearest) {
+                    nearest = distance; selected = static_cast<int>(team); selectedGroup = static_cast<int>(id);
+                }
+            }
+        }
+        if (selected >= 0) return;
         for (unsigned i = 0; i < simulation.formations.size(); ++i) {
             const auto& formation = simulation.formations[i];
             const float dx = point->x - formation.x, dz = point->z - formation.z;
@@ -54,6 +82,41 @@ struct WindowState {
                 nearest = distance; selected = static_cast<int>(i);
             }
         }
+    }
+    std::wstring selectionStatus() const {
+        if (selected < 0) return L"選択なし";
+        std::wstring text = selected == 0 ? L"赤備" : L"青備";
+        if (selectedGroup < 0) return text;
+        const auto& organization = simulation.formations[static_cast<unsigned>(selected)].organization;
+        const auto& group = organization.smallGroups[static_cast<unsigned>(selectedGroup)];
+        const auto& company = organization.companies[group.company];
+        const unsigned nearby = simulation.nearbyRouts(static_cast<unsigned>(selected), static_cast<unsigned>(selectedGroup));
+        if (nearby > 0) text += L" [動揺:近隣" + std::to_wstring(nearby) + L"小組敗走・士気-" +
+            std::to_wstring(nearby * 6) + L"/秒]";
+        else if (group.routed && group.routShock > 0 && simulation.result == BattleResult::Ongoing)
+            text += L" [動揺源:残り" + std::to_wstring(static_cast<int>(std::ceil(group.routShock))) + L"秒]";
+        text += L" 第" + std::to_wstring(company.troop + 1) + L"隊 第" + std::to_wstring(group.company + 1) +
+            L"組 小組" + std::to_wstring(selectedGroup + 1);
+        const wchar_t* action = group.state == SmallGroupState::Fleeing ? (group.fleeBlocked ? L"敗走中・退路閉塞" : L"敗走中") :
+            group.state == SmallGroupState::Routed ? L"敗走済" : group.route == SmallGroupRoute::Returning ? L"復帰中" :
+            group.route == SmallGroupRoute::ReliefReserve ? L"前列交代中" :
+            group.route == SmallGroupRoute::ReliefWithdraw ? L"交代後退中" :
+            group.canAttack && simulation.result == BattleResult::Ongoing ? L"攻撃" : group.state == SmallGroupState::Engaged ? L"接敵" : group.state == SmallGroupState::Retreating ? L"撤退" :
+            group.state == SmallGroupState::Advancing ? L"前進" : L"待機";
+        text += L" " + std::wstring(action);
+        if (simulation.result == BattleResult::Ongoing && !group.routed && !group.canAttack && group.route == SmallGroupRoute::None && !simulation.formations[static_cast<unsigned>(selected)].defeated()) {
+            const wchar_t* reason = group.combatWait == CombatWait::NoTarget ? L"近くに攻撃対象なし" :
+                group.combatWait == CombatWait::OutOfRange ? L"射程外" :
+                group.combatWait == CombatWait::Turning ? L"旋回中" :
+                group.combatWait == CombatWait::Obstructed ? L"攻撃線が塞がれている" :
+                group.combatWait == CombatWait::PathBlocked ? L"進路閉塞" :
+                group.combatWait == CombatWait::Detouring ? L"迂回中" :
+                group.combatWait == CombatWait::Held ? L"停止命令中" : L"";
+            if (*reason) text += L" [" + std::wstring(reason) + L"]";
+        }
+        return text + L" 兵力" + std::to_wstring(static_cast<int>(std::ceil(group.strength))) +
+            L"/" + std::to_wstring(group.nominalStrength) + L" 士気" + std::to_wstring(static_cast<int>(group.morale)) +
+            L" 疲労" + std::to_wstring(static_cast<int>(group.fatigue));
     }
     bool rotating = false, inspectPlaying = false;
     bool orbitLeft = false, orbitRight = false;
@@ -102,6 +165,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         case WM_CAPTURECHANGED:
             state->rotating = false; return 0;
         case WM_KILLFOCUS:
+            if (state->audio) state->audio->silence();
             state->orbitLeft = state->orbitRight = false;
             state->rotating = false;
             if (GetCapture() == window) ReleaseCapture();
@@ -119,6 +183,13 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             if (wparam == '2') state->requestedSoldiers = 5000;
             if (wparam == '3') state->requestedSoldiers = 10000;
             if (!(lparam & (1LL << 30))) {
+                if (wparam == VK_F5) state->audioSettings.selectNext();
+                if (wparam == VK_OEM_PLUS || wparam == VK_ADD) state->audioSettings.adjust(1);
+                if (wparam == VK_OEM_MINUS || wparam == VK_SUBTRACT) state->audioSettings.adjust(-1);
+                if ((wparam == VK_OEM_PLUS || wparam == VK_ADD || wparam == VK_OEM_MINUS || wparam == VK_SUBTRACT) &&
+                    !state->audioSettingsPath.empty())
+                    state->audioSaveFailed = !state->audioSettings.save(state->audioSettingsPath);
+                if (wparam == 'M') { state->muted = !state->muted; if (state->muted && state->audio) state->audio->silence(); }
                 if (wparam == 'H' && !state->inspect && state->selected >= 0)
                     state->simulation.hold(static_cast<unsigned>(state->selected));
                 if (wparam == VK_F2) { state->inspect = !state->inspect; state->resetCamera(); state->sceneDirty = true; }
@@ -133,7 +204,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     else state->simulation.toggle();
                 }
                 if (wparam == VK_HOME) {
-                    state->selected = -1;
+                    state->selected = state->selectedGroup = -1;
                     state->simulation.reset(); state->inspectTime = 0; state->inspectPlaying = false;
                 }
             }
@@ -207,6 +278,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         options = parseOptions();
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         WindowState state; state.requestedSoldiers = options.soldiers;
+        if (!options.smoke) {
+            state.audioSettingsPath = executableDirectory() / L"audio-settings.txt";
+            state.audioSettings.load(state.audioSettingsPath);
+        }
         state.inspect = options.inspect; state.placeholder = options.placeholder; state.resetCamera();
         state.inspectAttack = options.inspectAttack;
         state.camera.rotate(DirectX::XMConvertToRadians(options.yawDegrees));
@@ -235,6 +310,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         if (!GetClientRect(window, &actualContent) || actualContent.right != initialWidth || actualContent.bottom != initialHeight)
             throw std::runtime_error("Initial content size does not match the requested resolution");
         Renderer renderer(window, state.width, state.height, options.warp, executableDirectory() / L"shaders/battlefield.hlsl");
+        BattleAudio audio(!options.smoke);
+        BattleImpactTracker impactTracker;
+        state.audio = &audio;
         const auto sheetPath = executableDirectory() / L"assets/sprites/ashigaru_idle.png";
         const auto walkPath = executableDirectory() / L"assets/sprites/ashigaru_walk.png";
         const auto attackPath = executableDirectory() / L"assets/sprites/ashigaru_attack.png";
@@ -283,6 +361,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (state.selected != 1) throw std::runtime_error("Second formation selection failed");
             clickWorld(WM_LBUTTONDOWN, 0, 0);
             if (state.selected != -1) throw std::runtime_error("Empty terrain did not clear selection");
+            state.simulation.formations[0].organization.smallGroups[15].offsetX = -6.1f;
+            clickWorld(WM_LBUTTONDOWN, -16.5f, -16.8f);
+            if (state.selected != 0 || state.selectedGroup != 15 || state.selectionStatus().find(L"小組16") == std::wstring::npos)
+                throw std::runtime_error("Flanking small group selection or hierarchy status failed");
+            clickWorld(WM_RBUTTONDOWN, 10, -10);
+            if (std::abs(state.simulation.formations[0].targetX - 10) > 0.2f)
+                throw std::runtime_error("Small group selection did not command its formation");
+            SendMessageW(window, WM_KEYDOWN, VK_HOME, 0);
+            if (state.selected != -1 || state.selectedGroup != -1)
+                throw std::runtime_error("Reset did not clear small group selection");
             state.simulation.reset(); state.simulation.running = options.march;
         }
         if (options.motionTest && !options.placeholder && !activeScene.animatedSoldiers)
@@ -294,6 +382,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         const unsigned smokeFrames = options.combatTest ? 80 : options.motionTest ? 16 : 5;
         bool observedCombat = false, observedRetreat = false;
         bool observedAttack = false;
+        bool observedFrontRelief = false;
+        bool observedLocalRout = false;
+        unsigned routCaptureFrame = smokeFrames;
         while (running) {
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -302,6 +393,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             }
             if (!running) break;
             if (state.minimized || !state.width || !state.height) {
+                audio.silence();
                 WaitMessage(); previous = std::chrono::steady_clock::now(); continue;
             }
             const auto now = std::chrono::steady_clock::now();
@@ -373,41 +465,61 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 // 描画間にも個体状態を更新し、接敵・補充・攻撃を通常実行に近い間隔で確認する。
                 for (unsigned step = 0; step < 10; ++step) {
                     state.simulation.update(0.1f);
-                    updateSceneSprites(activeScene, state.simulation, state.camera, state.selected);
+                    updateSceneSprites(activeScene, state.simulation, state.camera, state.selected, state.selectedGroup);
                     observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
+                    for (const auto& f : state.simulation.formations) for (unsigned id = 0; id < 25; ++id)
+                        observedFrontRelief |= f.organization.smallGroups[id].slot != id;
                 }
             } else state.simulation.update(simulationDt);
             observedCombat |= state.simulation.formations[0].state == FormationState::Engaged;
             observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
+            if (options.combatTest && !observedLocalRout && state.simulation.result == BattleResult::Ongoing)
+                for (const auto& f : state.simulation.formations) if (f.routedGroups() > 0 && !f.defeated()) {
+                    observedLocalRout = true; routCaptureFrame = frame + 3;
+                }
             auto visualSimulation = state.simulation;
             if (state.inspect) visualSimulation.time = state.inspectTime;
-            updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected);
+            updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected, state.selectedGroup);
+            const bool audible = !state.muted && !state.inspect && GetForegroundWindow() == window && state.simulation.running;
+            const auto impacts = impactTracker.update(*activeScene.individuals, audible);
+            if (!audible) audio.silence();
+            else audio.update(state.audioSettings.apply(battleSoundMix(*activeScene.individuals, state.simulation, state.camera, true)), dt, impacts);
             if (options.combatTest) for (const auto& soldier : activeScene.individuals->soldiers)
                 observedAttack |= soldier.attacking;
             renderer.updateSprites(activeScene.sprites);
             renderer.resize(state.width, state.height);
             const bool captureNow = !options.capture.empty() && (options.smoke ? frame == smokeFrames - 1 : frame == 0);
-            const auto capturePath = options.combatTest && frame == 19 ?
+            const auto capturePath = options.combatTest && frame == routCaptureFrame ?
+                std::filesystem::path(options.capture.wstring() + L".rout.bmp") : options.combatTest && frame == 19 ?
                 std::filesystem::path(options.capture.wstring() + L".engaged.bmp") : captureNow ? options.capture : std::filesystem::path{};
             renderer.render(state.camera, capturePath);
             if (options.smoke) renderer.checkDebugMessages();
             titleSeconds += elapsed; ++titleFrames; ++frame;
             if (titleSeconds >= 0.5 || frame == 1) {
                 const int fps = titleSeconds > 0 ? static_cast<int>(titleFrames / titleSeconds) : 0;
-                const auto title = std::wstring(L"戦国合戦 | ") + (state.inspect ? L"素材確認" : battleStatus(state.simulation)) + L" | " +
+                const auto title = std::wstring(L"戦国合戦 | ") + (state.inspect ? L"素材確認" : state.selectionStatus()) + L" | " +
+                    (state.inspect ? L"" : battleStatus(state.simulation)) + L" | " +
                     (generatedSoldiers ? L"Blender槍足軽" : L"仮素材") +
                     (state.inspect ? L" 素材確認 | " : L" 戦場 | ") + L"表示上限 " + std::to_wstring(displayedSoldiers) + L" | " +
                     std::to_wstring(fps) + L" fps | " + (state.inspect ? L"素材確認" :
                         (state.selected == 0 ? L"赤部隊を選択" : state.selected == 1 ? L"青部隊を選択" : L"選択なし")) +
-                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃";
+                    (audio.available() ? (state.muted ? L" | 消音" : L" | 音ON") : L" | 音声出力なし") +
+                    L" 音量[" + (state.audioSettings.selected == AudioBus::Master ? L"全体 " :
+                        state.audioSettings.selected == AudioBus::Environment ? L"環境 " : L"効果音 ") +
+                    std::to_wstring(state.audioSettings.percent[static_cast<unsigned>(state.audioSettings.selected)]) + L"%]" +
+                    (state.audioSaveFailed ? L" 音量保存失敗" : L"") +
+                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 M:消音 F5:音量対象 +/-:調整";
                 SetWindowTextW(window, title.c_str()); titleSeconds = 0; titleFrames = 0;
             }
             if (options.smoke && frame >= smokeFrames) break;
         }
         if (options.smoke) {
-            if (options.combatTest && (!observedCombat || !observedRetreat || !observedAttack || state.simulation.result != BattleResult::RedVictory ||
-                state.simulation.formations[1].state != FormationState::Routed))
-                throw std::runtime_error("Combat smoke did not complete engagement and retreat");
+            if (options.combatTest && (!observedCombat || !observedRetreat || !observedAttack || !observedFrontRelief || !observedLocalRout || state.simulation.result != BattleResult::RedVictory ||
+                !state.simulation.formations[1].defeated()))
+                throw std::runtime_error("Combat smoke failed: combat=" + std::to_string(observedCombat) +
+                    " relief=" + std::to_string(observedFrontRelief) + " localRout=" + std::to_string(observedLocalRout) +
+                    " retreat=" + std::to_string(observedRetreat) + " attack=" + std::to_string(observedAttack) +
+                    " result=" + std::to_string(static_cast<int>(state.simulation.result)));
             std::ofstream report(std::filesystem::path(options.capture.wstring() + L".txt"));
             report << "PASS: " << frame << " frames; resize; camera pan/zoom/orbit; sprite updates; GPU readback\n"
                    << "Soldiers: " << displayedSoldiers << "\nCapture: " << state.width << 'x' << state.height << '\n'

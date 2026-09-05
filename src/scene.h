@@ -43,6 +43,8 @@ struct SoldierVisuals {
     std::vector<SoldierVisual> soldiers;
     std::uint64_t generation = 0;
     double time = 0;
+    std::array<std::uint64_t, 2> impacts{};
+    std::array<DirectX::XMFLOAT3, 2> impactPositions{};
     void update(const BattleSimulation& simulation);
     static DirectX::XMFLOAT2 offset(unsigned id);
 };
@@ -90,6 +92,6 @@ struct SceneOptions {
 
 float terrainHeight(float x, float z);
 Scene makeScene(unsigned soldiers = 1000, const SceneOptions& options = {});
-void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected = -1);
+void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected = -1, int selectedGroup = -1);
 std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& camera,
     float pixelX, float pixelY, unsigned width, unsigned height);

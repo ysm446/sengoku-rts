@@ -200,7 +200,7 @@ std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& c
     return result;
 }
 
-void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected) {
+void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected, int selectedGroup) {
     if (!scene.inspect) scene.individuals->update(simulation);
     for (const auto& binding : scene.soldierBindings) {
         auto& sprite = scene.sprites[binding.spriteIndex];
@@ -219,6 +219,11 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
             if (static_cast<int>(binding.formation) == selected && soldier.life == SoldierLife::Alive) {
                 sprite.tint.x = std::min(1.0f, sprite.tint.x + 0.2f);
                 sprite.tint.y += 0.2f; sprite.tint.z += 0.12f;
+                if (static_cast<int>(soldier.smallGroup) == selectedGroup) {
+                    sprite.tint.x = std::min(1.0f, sprite.tint.x + 0.15f);
+                    sprite.tint.y = std::min(1.0f, sprite.tint.y + 0.2f);
+                    sprite.tint.z = std::min(1.0f, sprite.tint.z + 0.2f);
+                }
             }
             if (soldier.life != SoldierLife::Alive) {
                 const float fall = std::clamp(static_cast<float>((simulation.time - soldier.deathTime) / 0.8), 0.0f, 1.0f);
