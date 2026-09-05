@@ -9,7 +9,7 @@ import zlib
 
 import bpy
 from bpy_extras.object_utils import world_to_camera_view
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 
 TILE = 64
@@ -212,6 +212,7 @@ def png(path, width, height, pixels):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--attack-only', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -238,15 +239,20 @@ def main():
     scene.world.node_tree.nodes.get('Background').inputs[1].default_value = 0.7
     character = make_character()
     rig = make_rig(character)
+    world_size = 5.0 if args.attack_only else SCALE
+    pivot = (0.5, 0.75) if args.attack_only else PIVOT
+    base_transforms = {obj.name: obj.matrix_local.copy() for obj in character.children if obj.type == 'MESH'}
+    base_vertices = {obj.name: [vertex.co.copy() for vertex in obj.data.vertices]
+                     for obj in character.children if obj.type == 'MESH'}
     elevation = math.atan2(78, math.sqrt(65 * 65 * 2))
-    target = Vector((0, 0, (PIVOT[1] - 0.5) * SCALE / math.cos(elevation)))
+    target = Vector((0, 0, (pivot[1] - 0.5) * world_size / math.cos(elevation)))
     camera_data = bpy.data.cameras.new('Sprite_Orthographic')
     camera = bpy.data.objects.new('Sprite_Orthographic', camera_data)
     scene.collection.objects.link(camera)
     camera.location = target + Vector((0, -10 * math.cos(elevation), 10 * math.sin(elevation)))
     camera.rotation_euler = (target - camera.location).to_track_quat('-Z', 'Y').to_euler()
     camera_data.type = 'ORTHO'
-    camera_data.ortho_scale = SCALE
+    camera_data.ortho_scale = world_size
     scene.camera = camera
     light_data = bpy.data.lights.new('Key_Soft', 'AREA')
     light_data.energy = 400
@@ -258,15 +264,35 @@ def main():
     light.rotation_euler = (Vector((0, 0, 1)) - light.location).to_track_quat('-Z', 'Y').to_euler()
     bpy.context.view_layer.update()
     projected = world_to_camera_view(scene, camera, Vector((0, 0, 0)))
-    assert abs(projected.x - PIVOT[0]) < 1e-5 and abs(1 - projected.y - PIVOT[1]) < 1e-5
+    assert abs(projected.x - pivot[0]) < 1e-5 and abs(1 - projected.y - pivot[1]) < 1e-5
 
     sheets = {}
     counts = {}
-    for animation, frames in (('idle', [0]), ('walk', list(range(1, 9)))):
+    animations = (('attack', list(range(8))),) if args.attack_only else (('idle', [0]), ('walk', list(range(1, 9))))
+    for animation, frames in animations:
         sheet = bytearray(TILE * 8 * TILE * len(frames) * 4)
         occupied = []
         for row, frame in enumerate(frames):
-            scene.frame_set(frame)
+            scene.frame_set(0 if args.attack_only else frame)
+            if args.attack_only:
+                character.rotation_euler.z = 0
+                thrust = (1 - math.cos(frame * math.tau / 8)) * 0.5
+                hand = Vector((0.43, -0.25, 1.10))
+                spear_pose = (Matrix.Translation((0, -thrust * 0.4, 0)) @ Matrix.Translation(hand) @
+                              Matrix.Rotation(math.pi / 2, 4, 'X') @ Matrix.Translation(-hand))
+                for obj in character.children:
+                    if obj.type != 'MESH':
+                        continue
+                    obj.matrix_local = base_transforms[obj.name].copy()
+                    transform = Matrix.Identity(4)
+                    if obj.name.startswith('Yari_'):
+                        transform = spear_pose
+                    elif obj.name.startswith(('Right_Hand', 'Right_Forearm')):
+                        transform = Matrix.Translation((0, -thrust * 0.4, 0))
+                    local_pose = obj.matrix_local.inverted() @ transform @ obj.matrix_local
+                    for vertex, original in zip(obj.data.vertices, base_vertices[obj.name]):
+                        vertex.co = local_pose @ original
+                rig.pose.bones['arm.L'].rotation_euler.x = -0.65
             for direction in range(8):
                 pixels, count = render_sprite(scene, character, output, f'{animation}_{row}', direction)
                 occupied.append(count)
@@ -276,6 +302,14 @@ def main():
         png(output / f'ashigaru_{animation}.png', TILE * 8, TILE * len(frames), sheet)
         sheets[animation] = sheet
         counts[animation] = occupied
+    if args.attack_only:
+        metadata = {'schema': 1, 'blender': bpy.app.version_string, 'animation': 'attack',
+                    'tile_size': TILE, 'directions': 8, 'frames': 8, 'fps': 8,
+                    'pivot_top_left': pivot, 'world_size': world_size,
+                    'layout': 'rows=frames, columns=directions', 'opaque_pixels': counts['attack']}
+        (output / 'ashigaru_attack.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
+        print('SENGOKU_ATTACK_READY', output, flush=True)
+        return
     sheet = sheets['idle']
     # 拡大比較用。最近傍で8倍にし、背景はゲームの地面に近い黄土色にする。
     preview = bytearray()

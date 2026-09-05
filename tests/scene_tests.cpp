@@ -170,8 +170,28 @@ int wmain(int argc, wchar_t** argv) {
 
         walkingOptions.soldierSheet = argv[1];
         walkingOptions.walkSheet = walkingOptions.soldierSheet.parent_path() / L"ashigaru_walk.png";
+        walkingOptions.attackSheet = walkingOptions.soldierSheet.parent_path() / L"ashigaru_attack.png";
         auto movingScene = makeScene(1000, walkingOptions);
         require(movingScene.animatedSoldiers, "Walk sprite sheet was not loaded");
+        require(movingScene.attackSoldiers, "Attack sprite sheet was not loaded");
+        std::set<std::uint64_t> attackPoses;
+        for (unsigned frame = 0; frame < Scene::attackFrames; ++frame) {
+            std::uint64_t hash = 1469598103934665603ull;
+            unsigned opaque = 0;
+            for (unsigned direction = 0; direction < 8; ++direction) {
+                for (unsigned y = 0; y < 64; ++y) for (unsigned x = 0; x < 64; ++x) {
+                    const auto pixel = movingScene.atlas[((Scene::attackRow + frame) * 64 + y) * Scene::atlasWidth + (4 + direction) * 64 + x];
+                    const auto alpha = pixel >> 24;
+                    require(alpha == 0 || alpha == 255, "Attack alpha is not binary");
+                    if (x == 0 || y == 0 || x == 63 || y == 63) require(alpha == 0, "Attack frame clipped");
+                    opaque += alpha == 255;
+                    hash = (hash ^ pixel) * 1099511628211ull;
+                }
+            }
+            require(opaque > 800, "Attack frame missing");
+            attackPoses.insert(hash);
+        }
+        require(attackPoses.size() >= 4, "Attack frames do not change pose");
         std::set<std::uint64_t> poses;
         for (unsigned frame = 1; frame <= Scene::walkFrames; ++frame) {
             std::uint64_t hash = 1469598103934665603ull;
@@ -214,18 +234,23 @@ int wmain(int argc, wchar_t** argv) {
             BattleSimulation losses;
             losses.formations[0].strength = 250;
             losses.formations[0].cohesion = 30;
+            losses.formations[0].z = -14; losses.formations[1].z = 14;
+            losses.formations[0].state = losses.formations[1].state = FormationState::Engaged;
+            updateSceneSprites(casualtyScene, losses, Camera{});
+            losses.time = 1;
             updateSceneSprites(casualtyScene, losses, Camera{});
             unsigned visible = 0;
             for (const auto& binding : casualtyScene.soldierBindings) {
                 const auto& sprite = casualtyScene.sprites[binding.spriteIndex];
                 const auto& individual = casualtyScene.individuals->soldiers[binding.formation * SoldierVisuals::perTeam + binding.ordinal];
                 if (individual.life == SoldierLife::Alive) ++visible;
+                else require(individual.position.z > -3, "Rear soldier was selected as a casualty");
                 require(sprite.size.x > 0, "Casualty disappeared instead of falling");
                 require(std::isfinite(sprite.position.x) && std::abs(sprite.position.y -
                     terrainHeight(sprite.position.x, sprite.position.z) - (individual.life == SoldierLife::Alive ? 0.03f : 0.08f)) < 0.0001f,
                     "Disordered soldier lost ground contact");
             }
-            require(visible == count * 3 / 4, "Casualties did not scale with display count");
+            require(visible < count && visible > count * 3 / 4, "Casualties must be limited to the contacting front");
             losses.reset(); updateSceneSprites(casualtyScene, losses, Camera{});
             for (const auto& binding : casualtyScene.soldierBindings)
                 require(casualtyScene.sprites[binding.spriteIndex].size.x > 0, "Reset did not restore casualty sprites");
@@ -247,6 +272,7 @@ int wmain(int argc, wchar_t** argv) {
         require(individual0.walking && individual10.walking && individual0.animationTime != individual10.animationTime,
             "Individual walk clocks are not independent");
         individualsBattle.formations[0].strength = 250;
+        individualsBattle.update(6);
         updateSceneSprites(individualsScene, individualsBattle, Camera{});
         std::size_t casualty = 0;
         while (individualsScene.individuals->soldiers[casualty].life == SoldierLife::Alive) ++casualty;
@@ -275,6 +301,111 @@ int wmain(int argc, wchar_t** argv) {
         individualsBattle.reset(); updateSceneSprites(rebuilt, individualsBattle, camera);
         for (const auto& soldier : rebuilt.individuals->soldiers)
             require(soldier.life == SoldierLife::Alive, "Reset left a corpse behind");
+        for (const DirectX::XMFLOAT2 direction : {DirectX::XMFLOAT2{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+            BattleSimulation frontBattle;
+            for (unsigned team = 0; team < 2; ++team) {
+                auto& f = frontBattle.formations[team];
+                const float sign = team == 0 ? -1.0f : 1.0f;
+                f.x = f.targetX = direction.x * sign * 14;
+                f.z = f.targetZ = direction.y * sign * 14;
+                f.state = FormationState::Engaged;
+                f.strength = 499;
+            }
+            SoldierVisuals frontVisuals;
+            frontVisuals.update(frontBattle);
+            for (auto& soldier : frontVisuals.soldiers) soldier.animationTime = 0;
+            frontBattle.time = 0.1; frontVisuals.update(frontBattle);
+            std::vector<bool> hitTargets(frontVisuals.soldiers.size(), false);
+            for (const auto& soldier : frontVisuals.soldiers) {
+                require(soldier.life == SoldierLife::Alive, "Soldier died before spear impact");
+                if (soldier.attacking) hitTargets[static_cast<unsigned>(soldier.attackTarget)] = true;
+            }
+            // 同じ時刻での再描画では命中も動作時計も進めない。
+            frontVisuals.update(frontBattle);
+            for (const auto& soldier : frontVisuals.soldiers)
+                require(soldier.life == SoldierLife::Alive, "Redraw generated a hit");
+            frontBattle.time = 1; frontVisuals.update(frontBattle);
+            unsigned dead = 0;
+            for (unsigned i = 0; i < frontVisuals.soldiers.size(); ++i) {
+                const auto& soldier = frontVisuals.soldiers[i];
+                if (soldier.life == SoldierLife::Alive) continue;
+                require(hitTargets[i], "Casualty was not an attack target");
+                ++dead;
+                const unsigned team = i / SoldierVisuals::perTeam;
+                const auto& f = frontBattle.formations[team];
+                const float sign = team == 0 ? 1.0f : -1.0f;
+                require(((soldier.position.x - f.x) * direction.x + (soldier.position.z - f.z) * direction.y) * sign > 12,
+                    "Casualty selection ignored the enemy direction");
+            }
+            require(dead == 20, "Contacting front did not receive both teams' losses");
+            frontBattle.formations[1].x += 100;
+            frontBattle.formations[0].strength = 250;
+            frontBattle.time += 10; frontVisuals.update(frontBattle);
+            unsigned afterSeparation = 0;
+            for (const auto& soldier : frontVisuals.soldiers) afterSeparation += soldier.life != SoldierLife::Alive;
+            require(afterSeparation == dead, "Distant enemy caused rear casualties");
+        }
+        auto meleeScene = makeScene(10000, walkingOptions);
+        BattleSimulation meleeBattle;
+        meleeBattle.formations[0].z = meleeBattle.formations[0].targetZ = -14;
+        meleeBattle.formations[1].z = meleeBattle.formations[1].targetZ = 14;
+        meleeBattle.formations[1].morale = 100;
+        meleeBattle.formations[0].state = meleeBattle.formations[1].state = FormationState::Engaged;
+        updateSceneSprites(meleeScene, meleeBattle, Camera{});
+        meleeBattle.time = 0.1; updateSceneSprites(meleeScene, meleeBattle, Camera{});
+        unsigned attackers = 0;
+        unsigned frontId = 0;
+        for (unsigned i = 0; i < meleeScene.individuals->soldiers.size(); ++i) {
+            const auto& soldier = meleeScene.individuals->soldiers[i];
+            if (!soldier.attacking) continue;
+            ++attackers;
+            if (i < SoldierVisuals::perTeam) frontId = i;
+            require(soldier.attackTarget >= 0 && !soldier.walking, "Attacker has no target or is walking");
+            const auto& target = meleeScene.individuals->soldiers[static_cast<unsigned>(soldier.attackTarget)];
+            require(target.life == SoldierLife::Alive && std::hypot(soldier.position.x - target.position.x,
+                soldier.position.z - target.position.z) <= 3.5f, "Attacker is swinging at a distant or dead enemy");
+            require(meleeScene.sprites[meleeScene.soldierBindings[i].spriteIndex].tile >= Scene::attackRow * Scene::atlasColumns,
+                "Contacting soldier is not using the attack atlas");
+        }
+        require(attackers > 0 && attackers < 300, "Whole formation is attacking");
+        const auto rear = meleeScene.individuals->soldiers[0];
+        require(!rear.attacking && !rear.walking, "Rear soldier did not wait");
+        require(frontId >= 71, "Missing front replacement candidate");
+        const unsigned replacement = frontId - 71;
+        const auto beforeReplacement = meleeScene.individuals->soldiers[replacement].position;
+        require(meleeScene.individuals->soldiers[replacement].smallGroup ==
+            meleeScene.individuals->soldiers[frontId].smallGroup, "Replacement crossed small-group boundary");
+        auto& front = meleeScene.individuals->soldiers[frontId];
+        front.life = SoldierLife::Fallen; front.deathTime = -10;
+        const auto deathPosition = front.position;
+        meleeBattle.time += 0.5; updateSceneSprites(meleeScene, meleeBattle, Camera{});
+        require(meleeScene.individuals->soldiers[replacement].position.z > beforeReplacement.z + 0.1f,
+            "Next rank did not fill front vacancy");
+        require(front.position.z == deathPosition.z, "Replenishment moved a corpse");
+        require(meleeScene.individuals->soldiers[0].animationTime == rear.animationTime,
+            "Uninvolved rear rank advanced attack animation");
+        BattleSimulation flanking;
+        SoldierVisuals flankingVisuals;
+        flankingVisuals.update(flanking);
+        flanking.toggle();
+        for (unsigned step = 0; step < 600; ++step) {
+            flanking.update(1.0f / 60);
+            flankingVisuals.update(flanking);
+        }
+        const unsigned flankSoldier = 43 * 71;
+        const auto& flanker = flankingVisuals.soldiers[flankSoldier];
+        const auto base = SoldierVisuals::offset(flankSoldier);
+        require(flanker.smallGroup == 15 && flanker.position.x < base.x - 5.9f &&
+            flanker.position.z > flanking.formations[0].z + base.y + 3,
+            "Soldier did not follow its small group's flank route");
+        require(flanker.life == SoldierLife::Alive && flanker.walking,
+            "Moving flank soldier did not remain alive and walking");
+        flanking.move(0, 0, -55); flanking.hold(1);
+        flanking.update(20); flankingVisuals.update(flanking);
+        const auto& restored = flankingVisuals.soldiers[flankSoldier];
+        require(restored.life == SoldierLife::Alive && !restored.attacking &&
+            std::abs(restored.position.x - flanking.formations[0].x - base.x) < 0.6f,
+            "Returning soldier did not follow its restored small-group slot");
         std::cout << "Scene, camera and individual soldier checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

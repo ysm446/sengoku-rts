@@ -31,6 +31,10 @@ add_custom_target(sengoku_assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/sprites/ashigaru_walk.png"
         "$<TARGET_FILE_DIR:sengoku_rts>/assets/sprites/ashigaru_walk.png")
+add_custom_command(TARGET sengoku_assets POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/sprites/ashigaru_attack.png"
+        "$<TARGET_FILE_DIR:sengoku_rts>/assets/sprites/ashigaru_attack.png")
 add_dependencies(sengoku_rts sengoku_assets)
 # HLSLは実行時にコンパイルする。編集時にもコピーを更新する。
 set_property(TARGET sengoku_rts APPEND PROPERTY LINK_DEPENDS
@@ -57,4 +61,6 @@ if(BUILD_TESTING)
     set_tests_properties(dx12_motion PROPERTIES TIMEOUT 60)
     add_test(NAME dx12_combat COMMAND sengoku_rts --combat-test --capture "${CMAKE_BINARY_DIR}/combat.bmp")
     set_tests_properties(dx12_combat PROPERTIES TIMEOUT 60)
+    add_test(NAME dx12_attack COMMAND sengoku_rts --smoke-test --inspect-attack --capture "${CMAKE_BINARY_DIR}/attack.bmp")
+    set_tests_properties(dx12_attack PROPERTIES TIMEOUT 60)
 endif()

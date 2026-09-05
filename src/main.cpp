@@ -31,7 +31,7 @@ struct WindowState {
     unsigned width = initialWidth, height = initialHeight;
     unsigned requestedSoldiers = 1000;
     bool minimized = false;
-    bool inspect = false, placeholder = false, sceneDirty = false;
+    bool inspect = false, placeholder = false, sceneDirty = false, inspectAttack = false;
     unsigned direction = 0;
     BattleSimulation simulation;
     const Scene* scene = nullptr;
@@ -122,6 +122,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 if (wparam == 'H' && !state->inspect && state->selected >= 0)
                     state->simulation.hold(static_cast<unsigned>(state->selected));
                 if (wparam == VK_F2) { state->inspect = !state->inspect; state->resetCamera(); state->sceneDirty = true; }
+                if (wparam == VK_F3 && state->inspect) { state->inspectAttack = !state->inspectAttack; state->sceneDirty = true; }
                 if (wparam == 'V') { state->placeholder = !state->placeholder; state->sceneDirty = true; }
                 if (state->inspect && (wparam == 'Z' || wparam == 'C')) {
                     state->direction = (state->direction + (wparam == 'Z' ? 7 : 1)) % 8;
@@ -150,7 +151,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 
 struct Options {
     bool smoke = false, warp = false, inspect = false, placeholder = false;
-    bool march = false, motionTest = false, combatTest = false;
+    bool march = false, motionTest = false, combatTest = false, inspectAttack = false;
     float yawDegrees = 0;
     unsigned soldiers = 1000;
     std::filesystem::path capture;
@@ -166,6 +167,7 @@ Options parseOptions() {
             if (arg == L"--smoke-test") options.smoke = true;
             else if (arg == L"--warp") options.warp = true;
             else if (arg == L"--inspect") options.inspect = true;
+            else if (arg == L"--inspect-attack") { options.inspect = true; options.inspectAttack = true; options.march = true; }
             else if (arg == L"--placeholder") options.placeholder = true;
             else if (arg == L"--march") options.march = true;
             else if (arg == L"--motion-test") { options.motionTest = true; options.smoke = true; options.march = true; }
@@ -206,6 +208,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         WindowState state; state.requestedSoldiers = options.soldiers;
         state.inspect = options.inspect; state.placeholder = options.placeholder; state.resetCamera();
+        state.inspectAttack = options.inspectAttack;
         state.camera.rotate(DirectX::XMConvertToRadians(options.yawDegrees));
         state.simulation.running = options.march; state.inspectPlaying = options.march;
         WNDCLASSEXW wc{}; wc.cbSize = sizeof(wc); wc.lpfnWndProc = windowProc;
@@ -234,6 +237,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         Renderer renderer(window, state.width, state.height, options.warp, executableDirectory() / L"shaders/battlefield.hlsl");
         const auto sheetPath = executableDirectory() / L"assets/sprites/ashigaru_idle.png";
         const auto walkPath = executableDirectory() / L"assets/sprites/ashigaru_walk.png";
+        const auto attackPath = executableDirectory() / L"assets/sprites/ashigaru_attack.png";
         Scene activeScene;
         state.scene = &activeScene;
         unsigned requestedSoldiers = options.soldiers, displayedSoldiers = 0;
@@ -243,8 +247,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (!state.placeholder && std::filesystem::exists(sheetPath)) {
                 sceneOptions.soldierSheet = sheetPath;
                 if (std::filesystem::exists(walkPath)) sceneOptions.walkSheet = walkPath;
+                if (std::filesystem::exists(attackPath)) sceneOptions.attackSheet = attackPath;
             }
             sceneOptions.inspect = state.inspect; sceneOptions.directionOffset = state.inspect ? state.direction : 0;
+            sceneOptions.inspectAttack = state.inspectAttack;
             auto individuals = activeScene.individuals;
             activeScene = makeScene(state.requestedSoldiers, sceneOptions);
             activeScene.individuals = std::move(individuals);
@@ -252,6 +258,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             renderer.setScene(activeScene); state.sceneDirty = false; requestedSoldiers = state.requestedSoldiers;
         };
         rebuildScene();
+        if ((options.combatTest || options.inspectAttack) && !options.placeholder && !activeScene.attackSoldiers)
+            throw std::runtime_error("Attack sprite sheet is required for this test");
         if (options.smoke && !state.inspect) {
             const auto clickWorld = [&](UINT message, float x, float z) {
                 const auto projected = DirectX::XMVector3TransformCoord(
@@ -285,6 +293,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         bool running = true;
         const unsigned smokeFrames = options.combatTest ? 80 : options.motionTest ? 16 : 5;
         bool observedCombat = false, observedRetreat = false;
+        bool observedAttack = false;
         while (running) {
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -360,12 +369,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             const float simulationDt = options.combatTest ? 1.0f : options.smoke ? 0.125f : dt;
             if (state.inspect) {
                 if (state.inspectPlaying) state.inspectTime += simulationDt;
+            } else if (options.combatTest) {
+                // 描画間にも個体状態を更新し、接敵・補充・攻撃を通常実行に近い間隔で確認する。
+                for (unsigned step = 0; step < 10; ++step) {
+                    state.simulation.update(0.1f);
+                    updateSceneSprites(activeScene, state.simulation, state.camera, state.selected);
+                    observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
+                }
             } else state.simulation.update(simulationDt);
             observedCombat |= state.simulation.formations[0].state == FormationState::Engaged;
             observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
             auto visualSimulation = state.simulation;
             if (state.inspect) visualSimulation.time = state.inspectTime;
             updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected);
+            if (options.combatTest) for (const auto& soldier : activeScene.individuals->soldiers)
+                observedAttack |= soldier.attacking;
             renderer.updateSprites(activeScene.sprites);
             renderer.resize(state.width, state.height);
             const bool captureNow = !options.capture.empty() && (options.smoke ? frame == smokeFrames - 1 : frame == 0);
@@ -381,13 +399,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                     (state.inspect ? L" 素材確認 | " : L" 戦場 | ") + L"表示上限 " + std::to_wstring(displayedSoldiers) + L" | " +
                     std::to_wstring(fps) + L" fps | " + (state.inspect ? L"素材確認" :
                         (state.selected == 0 ? L"赤部隊を選択" : state.selected == 1 ? L"青部隊を選択" : L"選択なし")) +
-                    L" | 左:選択 右:移動 H:停止 Space:進軍/一時停止 Q/E・中ドラッグ:回転 Home:リセット F2:素材";
+                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃";
                 SetWindowTextW(window, title.c_str()); titleSeconds = 0; titleFrames = 0;
             }
             if (options.smoke && frame >= smokeFrames) break;
         }
         if (options.smoke) {
-            if (options.combatTest && (!observedCombat || !observedRetreat || state.simulation.result != BattleResult::RedVictory ||
+            if (options.combatTest && (!observedCombat || !observedRetreat || !observedAttack || state.simulation.result != BattleResult::RedVictory ||
                 state.simulation.formations[1].state != FormationState::Routed))
                 throw std::runtime_error("Combat smoke did not complete engagement and retreat");
             std::ofstream report(std::filesystem::path(options.capture.wstring() + L".txt"));
@@ -397,6 +415,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                    << "Walk atlas: " << (activeScene.animatedSoldiers ? "loaded" : "unavailable") << '\n'
                    << "Formation Z: " << state.simulation.formations[0].z << ", " << state.simulation.formations[1].z << '\n'
                    << "Combat/retreat observed: " << observedCombat << '/' << observedRetreat << '\n'
+                   << "Individual attack observed: " << observedAttack << '\n'
                    << "D3D12 debug layer: " << (renderer.debugEnabled() ? "enabled, no warnings/errors" : "unavailable") << '\n';
             if (!report) throw std::runtime_error("Cannot write smoke report");
         }

@@ -26,10 +26,14 @@ struct SpriteInstance {
 enum class SoldierLife { Alive, Falling, Fallen };
 struct SoldierVisual {
     DirectX::XMFLOAT3 position{};
+    DirectX::XMFLOAT2 slot{};
     float heading = 0;
     double animationTime = 0;
     double deathTime = 0;
     bool walking = false;
+    bool attacking = false;
+    int attackTarget = -1;
+    unsigned smallGroup = 0;
     SoldierLife life = SoldierLife::Alive;
 };
 
@@ -48,15 +52,19 @@ struct Scene {
     static constexpr unsigned tileHeight = 64;
     static constexpr unsigned atlasColumns = 12;
     static constexpr unsigned walkFrames = 8;
-    static constexpr unsigned tileCount = atlasColumns * (1 + walkFrames);
+    static constexpr unsigned attackFrames = 8;
+    static constexpr unsigned attackRow = 1 + walkFrames;
+    static constexpr unsigned tileCount = atlasColumns * (1 + walkFrames + attackFrames);
     static constexpr unsigned atlasWidth = tileWidth * atlasColumns;
-    static constexpr unsigned atlasHeight = tileHeight * (1 + walkFrames);
+    static constexpr unsigned atlasHeight = tileHeight * (1 + walkFrames + attackFrames);
     std::vector<TerrainVertex> terrain;
     std::vector<SpriteInstance> sprites;
     std::vector<std::uint32_t> atlas;
     unsigned soldierCount = 0;
     bool generatedSoldiers = false;
     bool animatedSoldiers = false;
+    bool attackSoldiers = false;
+    bool inspectAttack = false;
     bool inspect = false;
     float headingOffset = 0;
     std::shared_ptr<SoldierVisuals> individuals = std::make_shared<SoldierVisuals>();
@@ -74,8 +82,10 @@ struct Scene {
 struct SceneOptions {
     std::filesystem::path soldierSheet;
     std::filesystem::path walkSheet;
+    std::filesystem::path attackSheet;
     unsigned directionOffset = 0;
     bool inspect = false;
+    bool inspectAttack = false;
 };
 
 float terrainHeight(float x, float z);

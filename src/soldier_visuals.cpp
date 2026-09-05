@@ -1,12 +1,20 @@
 #include "scene.h"
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <limits>
 
 DirectX::XMFLOAT2 SoldierVisuals::offset(unsigned id) {
     constexpr unsigned columns = 71;
     constexpr float spacing = 26.0f / columns;
-    return {(static_cast<float>(id % columns) - 35) * spacing,
-            (static_cast<float>(id / columns) - 35) * spacing};
+    const auto coordinate = [&](unsigned cell) {
+        const unsigned group = cell * 5 / columns;
+        const unsigned first = (group * columns + 4) / 5;
+        const unsigned last = ((group + 1) * columns + 4) / 5 - 1;
+        const float center = (first + last) * 0.5f;
+        return (center - 35 + (cell - center) * 0.8f) * spacing;
+    };
+    return {coordinate(id % columns), coordinate(id / columns)};
 }
 
 void SoldierVisuals::update(const BattleSimulation& simulation) {
@@ -17,7 +25,10 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
             auto& soldier = soldiers[i];
             const auto& formation = simulation.formations[i / perTeam];
             const auto relative = offset(i % perTeam);
-            soldier.position = {formation.x + relative.x, 0, formation.z + relative.y};
+            soldier.slot = relative;
+            soldier.smallGroup = Organization::groupForSoldier(i % perTeam);
+            const auto& group = formation.organization.smallGroups[soldier.smallGroup];
+            soldier.position = {formation.x + relative.x + group.offsetX, 0, formation.z + relative.y + group.offsetZ};
             soldier.position.y = terrainHeight(soldier.position.x, soldier.position.z) + 0.03f;
             soldier.heading = formation.heading;
             soldier.walking = formation.moving;
@@ -25,26 +36,50 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
         }
     }
     const double dt = std::max(0.0, simulation.time - time);
+    if (dt > 0) {
+        for (unsigned team = 0; team < 2; ++team) {
+            const auto& formation = simulation.formations[team];
+            const auto& enemy = simulation.formations[1 - team];
+            if (formation.state != FormationState::Engaged) continue;
+            const bool alongX = std::abs(enemy.x - formation.x) > std::abs(enemy.z - formation.z);
+            const float sign = (alongX ? enemy.x - formation.x : enemy.z - formation.z) >= 0 ? 1.0f : -1.0f;
+            std::array<float, 71 * 25> fronts;
+            fronts.fill(-std::numeric_limits<float>::max());
+            std::array<unsigned, 71 * 25> ranks{};
+            for (unsigned id = 0; id < perTeam; ++id) {
+                const auto relative = offset(id);
+                const unsigned lane = Organization::groupForSoldier(id) * 71 + (alongX ? id / 71 : id % 71);
+                fronts[lane] = std::max(fronts[lane], sign * (alongX ? relative.x : relative.y));
+            }
+            // 列の並びを維持して生存兵士の目標位置を詰める。死亡位置は変更しない。
+            for (unsigned n = 0; n < perTeam; ++n) {
+                const unsigned id = sign > 0 ? perTeam - 1 - n : n;
+                auto& soldier = soldiers[team * perTeam + id];
+                if (soldier.life != SoldierLife::Alive) continue;
+                const unsigned lane = soldier.smallGroup * 71 + (alongX ? id / 71 : id % 71);
+                soldier.slot = offset(id);
+                const float forward = sign * (fronts[lane] - ranks[lane]++ * (26.0f / 71) * 0.8f);
+                if (alongX) soldier.slot.x = forward;
+                else soldier.slot.y = forward;
+            }
+        }
+    }
     for (unsigned i = 0; i < soldiers.size(); ++i) {
         auto& soldier = soldiers[i];
         const auto& formation = simulation.formations[i / perTeam];
         const unsigned id = i % perTeam;
-        const unsigned survivors = static_cast<unsigned>(std::ceil(perTeam * std::clamp(formation.strength / 500, 0.0f, 1.0f)));
-        if (soldier.life == SoldierLife::Alive && (id * 137) % perTeam >= survivors) {
-            soldier.life = SoldierLife::Falling;
-            soldier.deathTime = simulation.time;
-            soldier.walking = false;
-        }
         if (soldier.life != SoldierLife::Alive) {
             if (simulation.time - soldier.deathTime >= 0.8) soldier.life = SoldierLife::Fallen;
             continue;
         }
         if (dt <= 0) continue;
-        const auto relative = offset(id);
+        soldier.attacking = false; soldier.attackTarget = -1;
+        const auto relative = soldier.slot;
         const float variation = static_cast<float>((id * 53) % 101) / 100;
         const float disorder = (1 - formation.cohesion / 100) * 0.6f;
-        const float targetX = formation.x + relative.x + std::sin(id * 2.4f) * disorder;
-        const float targetZ = formation.z + relative.y + std::cos(id * 1.7f) * disorder;
+        const auto& group = formation.organization.smallGroups[soldier.smallGroup];
+        const float targetX = formation.x + relative.x + group.offsetX + std::sin(id * 2.4f) * disorder;
+        const float targetZ = formation.z + relative.y + group.offsetZ + std::cos(id * 1.7f) * disorder;
         const float dx = targetX - soldier.position.x, dz = targetZ - soldier.position.z;
         const float distance = std::hypot(dx, dz);
         // 個体ごとの追従速度。経路や損害を決める部隊Simulationへは書き戻さない。
@@ -55,9 +90,105 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
         if (remaining <= 0.003f) { soldier.position.x = targetX; soldier.position.z = targetZ; }
         if (soldier.walking && distance > 0.001f) soldier.heading = std::atan2(dz, dx);
         else soldier.heading = formation.heading;
-        if (soldier.walking || formation.state == FormationState::Engaged)
-            soldier.animationTime += dt * (0.85 + variation * 0.3);
         soldier.position.y = terrainHeight(soldier.position.x, soldier.position.z) + 0.03f;
+    }
+    if (dt > 0) {
+        // 損害は相手に届く生存前列へだけ割り当てる。両軍の候補は死亡確定前に求める。
+        std::array<std::vector<unsigned>, 2> casualties;
+        std::array<unsigned, 2> casualtyBudget{};
+        std::vector<bool> exposed(soldiers.size(), false);
+        std::vector<unsigned> hits;
+        for (unsigned team = 0; team < 2; ++team) {
+            const auto& formation = simulation.formations[team];
+            const auto& enemy = simulation.formations[1 - team];
+            if (formation.state != FormationState::Engaged || enemy.state != FormationState::Engaged) continue;
+            const float dx = enemy.x - formation.x, dz = enemy.z - formation.z;
+            const float distance = std::hypot(dx, dz);
+            if (distance < 0.001f) continue;
+            const float fx = dx / distance, fz = dz / distance;
+            const auto lane = [&](const SoldierVisual& s) {
+                return static_cast<int>(std::floor((-fz * s.position.x + fx * s.position.z) / 0.75f));
+            };
+            const auto forward = [&](const SoldierVisual& s) { return fx * s.position.x + fz * s.position.z; };
+            std::map<int, float> fronts;
+            unsigned dead = 0;
+            for (unsigned id = team * perTeam; id < (team + 1) * perTeam; ++id) {
+                const auto& s = soldiers[id];
+                if (s.life != SoldierLife::Alive) { ++dead; continue; }
+                const int key = lane(s);
+                const auto found = fronts.find(key);
+                if (found == fronts.end()) fronts.emplace(key, forward(s));
+                else found->second = std::max(found->second, forward(s));
+            }
+            const unsigned desired = perTeam - static_cast<unsigned>(std::ceil(perTeam * std::clamp(formation.strength / 500, 0.0f, 1.0f)));
+            casualtyBudget[team] = desired > dead ? desired - dead : 0;
+            std::map<int, float> enemyFronts;
+            for (unsigned other = (1 - team) * perTeam; other < (2 - team) * perTeam; ++other) {
+                const auto& opponent = soldiers[other];
+                if (opponent.life != SoldierLife::Alive) continue;
+                const int key = lane(opponent);
+                const auto found = enemyFronts.find(key);
+                if (found == enemyFronts.end()) enemyFronts.emplace(key, forward(opponent));
+                else found->second = std::min(found->second, forward(opponent));
+            }
+            std::vector<unsigned> opponents;
+            for (unsigned other = (1 - team) * perTeam; other < (2 - team) * perTeam; ++other) {
+                const auto& opponent = soldiers[other];
+                if (opponent.life == SoldierLife::Alive && forward(opponent) <= enemyFronts.at(lane(opponent)) + 0.1f)
+                    opponents.push_back(other);
+            }
+            for (unsigned id = team * perTeam; id < (team + 1) * perTeam; ++id) {
+                auto& s = soldiers[id];
+                if (s.life != SoldierLife::Alive || forward(s) < fronts.at(lane(s)) - 0.1f) continue;
+                float nearest = std::numeric_limits<float>::max();
+                int target = -1;
+                for (unsigned other : opponents) {
+                    const auto& opponent = soldiers[other];
+                    if (opponent.life != SoldierLife::Alive) continue;
+                    const float x = s.position.x - opponent.position.x, z = s.position.z - opponent.position.z;
+                    const float squared = x * x + z * z;
+                    if (squared < nearest) { nearest = squared; target = static_cast<int>(other); }
+                }
+                if (nearest <= 3.5f * 3.5f) {
+                    exposed[id] = true;
+                    // 復帰中も攻撃されるが、自分からの槍突きより移動を優先する。
+                    if (formation.organization.smallGroups[s.smallGroup].route == SmallGroupRoute::Returning) continue;
+                    s.attacking = true; s.attackTarget = target; s.walking = false;
+                    const auto& opponent = soldiers[static_cast<unsigned>(target)];
+                    s.heading = std::atan2(opponent.position.z - s.position.z, opponent.position.x - s.position.x);
+                    const float variation = static_cast<float>(((id % perTeam) * 53) % 101) / 100;
+                    const double next = s.animationTime + dt * (0.85 + variation * 0.3);
+                    // 8fps・8コマの槍突きが最も伸びる4コマ目を通過した相手だけを命中対象にする。
+                    if (std::floor(next - 0.5) > std::floor(s.animationTime - 0.5))
+                        hits.push_back(static_cast<unsigned>(target));
+                }
+            }
+        }
+        // 両軍の命中を集めてから死亡を確定する。同じ兵士への複数命中は一人分として扱う。
+        std::sort(hits.begin(), hits.end());
+        hits.erase(std::unique(hits.begin(), hits.end()), hits.end());
+        for (unsigned id : hits) {
+            const unsigned team = id / perTeam;
+            if (exposed[id] && casualties[team].size() < casualtyBudget[team]) casualties[team].push_back(id);
+        }
+        for (unsigned id = 0; id < soldiers.size(); ++id) {
+            auto& soldier = soldiers[id];
+            if (soldier.life == SoldierLife::Alive && (soldier.walking || soldier.attacking)) {
+                const float variation = static_cast<float>(((id % perTeam) * 53) % 101) / 100;
+                soldier.animationTime += dt * (0.85 + variation * 0.3);
+            }
+        }
+        for (const auto& team : casualties) for (unsigned id : team) {
+            auto& soldier = soldiers[id];
+            soldier.life = SoldierLife::Falling; soldier.deathTime = simulation.time; soldier.walking = false;
+            soldier.attacking = false; soldier.attackTarget = -1;
+        }
+        for (unsigned id = 0; id < soldiers.size(); ++id) {
+            auto& soldier = soldiers[id];
+            if (soldier.attacking && soldiers[static_cast<unsigned>(soldier.attackTarget)].life != SoldierLife::Alive) {
+                soldier.attacking = false; soldier.attackTarget = -1;
+            }
+        }
     }
     time = simulation.time;
 }

@@ -49,13 +49,14 @@ SpriteOutput spriteVS(SpriteInput input, uint id : SV_VertexID) {
         // Blender側ですでに俯瞰投影した画像は画面に平行な板へ置く。
         // Pivotは生成スクリプトと揃え、足元の原点を地形へ接地させる。
         float3 up = posed ? input.upAxis : cameraUp.xyz;
-        world += up * ((0.88 - corner.y) * input.size.y);
+        float pivot = input.tile >= 108 ? 0.75 : 0.88;
+        world += up * ((pivot - corner.y) * input.size.y);
     } else world += (posed ? input.upAxis : float3(0, 1, 0)) * ((1 - corner.y) * input.size.y);
     SpriteOutput result;
     result.position = mul(float4(world, 1), viewProjection);
     // 隣のAtlasタイルを拾わないよう半Texel内側に収める。
     result.uv = float2(((input.tile % 12) * 64 + 0.5 + corner.x * 63) / 768,
-                       ((input.tile / 12) * 64 + 0.5 + corner.y * 63) / 576);
+                       ((input.tile / 12) * 64 + 0.5 + corner.y * 63) / 1088);
     result.tile = input.tile;
     result.tint = input.tint;
     return result;

@@ -12,12 +12,45 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
         require(x.state == y.state && std::abs(x.x - y.x) < 0.001f && std::abs(x.z - y.z) < 0.001f &&
             std::abs(x.strength - y.strength) < 0.001f && std::abs(x.morale - y.morale) < 0.001f &&
             std::abs(x.cohesion - y.cohesion) < 0.001f, "Formation depends on update interval");
+        for (unsigned id = 0; id < 25; ++id) {
+            const auto& g = x.organization.smallGroups[id];
+            const auto& h = y.organization.smallGroups[id];
+            require(g.state == h.state && std::abs(g.offsetX - h.offsetX) < 0.001f &&
+                std::abs(g.offsetZ - h.offsetZ) < 0.001f && std::abs(g.fatigue - h.fatigue) < 0.001f &&
+                g.route == h.route, "Small group depends on update interval");
+        }
     }
 }
 int main() {
     try {
         BattleSimulation battle;
+        const auto& organization = battle.formations[0].organization;
+        unsigned total = 0;
+        for (unsigned troop = 0; troop < organization.troops.size(); ++troop) {
+            const auto& unit = organization.troops[troop];
+            unsigned strength = 0;
+            for (unsigned c = unit.firstCompany; c < unit.firstCompany + unit.companyCount; ++c) {
+                const auto& company = organization.companies[c];
+                require(company.troop == troop, "Company assigned to wrong troop");
+                for (unsigned g = company.firstGroup; g < company.firstGroup + company.groupCount; ++g) {
+                    require(organization.smallGroups[g].company == c, "Small group assigned to wrong company");
+                    strength += organization.smallGroups[g].nominalStrength;
+                }
+            }
+            require(strength >= 200 && strength <= 500, "Troop strength outside planned range");
+            total += strength;
+        }
+        require(total == 500, "Hierarchy lost or duplicated nominal strength");
         battle.toggle(); battle.update(10);
+        for (unsigned team = 0; team < 2; ++team) {
+            unsigned engaged = 0, waiting = 0, advancing = 0;
+            for (const auto& group : battle.formations[team].organization.smallGroups) {
+                engaged += group.state == SmallGroupState::Engaged;
+                waiting += group.state == SmallGroupState::Waiting;
+                advancing += group.state == SmallGroupState::Advancing;
+            }
+            require(engaged == 5 && waiting == 18 && advancing == 2, "Unexpected frontline or flank allocation");
+        }
         require(battle.formations[0].state == FormationState::Engaged && battle.formations[1].state == FormationState::Engaged,
             "Default formations did not engage");
         require(battle.formations[1].z - battle.formations[0].z >= 27.99f, "Formations overlapped");
@@ -59,6 +92,89 @@ int main() {
         require(escape.formations[0].strength == escapedStrength && escape.result == BattleResult::Ongoing,
             "Move away did not disengage");
         battle.reset(); same(battle, BattleSimulation{});
+        for (bool alongX : {false, true}) {
+            BattleSimulation flank;
+            for (unsigned team = 0; team < 2; ++team) {
+                auto& f = flank.formations[team];
+                f.x = f.targetX = alongX ? (team == 0 ? -14.0f : 14.0f) : 0;
+                f.z = f.targetZ = alongX ? 0 : (team == 0 ? -14.0f : 14.0f);
+                f.morale = 100;
+            }
+            flank.toggle(); flank.update(2);
+            const unsigned id = alongX ? 3 : 15;
+            const auto outside = flank.formations[0].organization.smallGroups[id];
+            require((alongX ? outside.offsetZ : outside.offsetX) < -3 &&
+                (alongX ? outside.offsetX : outside.offsetZ) == 0, "Flank cut through the front rank");
+            auto halted = flank;
+            halted.hold(0); halted.update(2);
+            const auto& held = halted.formations[0].organization.smallGroups[id];
+            require(held.offsetX == outside.offsetX && held.offsetZ == outside.offsetZ,
+                "Hold did not cancel an active flank route");
+            flank.toggle(); const auto pausedFlank = flank; flank.update(2); same(flank, pausedFlank);
+            flank.toggle(); flank.update(6);
+            const auto advanced = flank.formations[0].organization.smallGroups[id];
+            require(std::abs((alongX ? advanced.offsetZ : advanced.offsetX) + 6.1f) < 0.001f &&
+                (alongX ? advanced.offsetX : advanced.offsetZ) > 3, "Flank did not advance outside its formation");
+            require(advanced.state == SmallGroupState::Engaged, "Flank did not stop at enemy contact");
+            auto relief = flank;
+            bool returned = false, replaced = false, withdrew = false;
+            for (unsigned tick = 0; tick < 1500; ++tick) {
+                relief.update(1.0f / 60);
+                const auto& groups = relief.formations[0].organization.smallGroups;
+                const auto& veteran = groups[id];
+                if (veteran.route == SmallGroupRoute::Returning) {
+                    withdrew = true;
+                    if ((alongX ? veteran.offsetX : veteran.offsetZ) != 0)
+                        require(std::abs((alongX ? veteran.offsetZ : veteran.offsetX) + 6.1f) < 0.001f,
+                            "Returning group cut diagonally through its formation");
+                }
+                if (withdrew && veteran.route == SmallGroupRoute::None && veteran.offsetX == 0 && veteran.offsetZ == 0)
+                    returned = true;
+                const unsigned reserveId = alongX ? 2 : 10;
+                if (groups[reserveId].route != SmallGroupRoute::None) {
+                    require(returned, "Reserve entered the route before the veteran returned");
+                    replaced = true;
+                    break;
+                }
+            }
+            require(withdrew && returned && replaced, "Fatigued flank did not rotate with a reserve");
+            const float tired = relief.formations[0].organization.smallGroups[id].fatigue;
+            relief.hold(0); relief.update(2);
+            require(relief.formations[0].organization.smallGroups[id].fatigue < tired,
+                "Resting veteran did not recover fatigue");
+            auto disengaged = flank;
+            disengaged.move(0, alongX ? -55.0f : 0, alongX ? 0 : -55.0f);
+            disengaged.hold(1); disengaged.update(20);
+            const auto& regrouped = disengaged.formations[0].organization.smallGroups[id];
+            require(regrouped.route == SmallGroupRoute::None && regrouped.offsetX == 0 && regrouped.offsetZ == 0,
+                "Disengaged group did not return to its standard slot");
+            auto returningPause = flank;
+            returningPause.move(0, alongX ? -55.0f : 0, alongX ? 0 : -55.0f);
+            returningPause.update(1);
+            returningPause.toggle(); const auto frozenReturn = returningPause;
+            returningPause.update(10); same(returningPause, frozenReturn);
+            returningPause.toggle(); returningPause.hold(0);
+            const auto heldReturn = returningPause.formations[0].organization.smallGroups[id];
+            returningPause.update(1);
+            const auto& stillHeld = returningPause.formations[0].organization.smallGroups[id];
+            require(stillHeld.offsetX == heldReturn.offsetX && stillHeld.offsetZ == heldReturn.offsetZ,
+                "Hold did not freeze the returning group");
+            flank.hold(0); flank.update(1);
+            const auto stopped = flank.formations[0].organization.smallGroups[id];
+            require(stopped.offsetX == advanced.offsetX && stopped.offsetZ == advanced.offsetZ,
+                "Hold did not stop small-group movement");
+            flank.reset(); same(flank, BattleSimulation{});
+        }
+        BattleSimulation blocked;
+        blocked.formations[0].z = blocked.formations[0].targetZ = -14;
+        blocked.formations[1].z = blocked.formations[1].targetZ = 14;
+        // 後方小組を外側の通路へ置き、追い越し側が重ならず待つことを確認する。
+        blocked.formations[0].organization.smallGroups[10].offsetX = -5.2f;
+        blocked.formations[0].organization.smallGroups[10].offsetZ = 5.2f;
+        blocked.toggle(); blocked.update(2);
+        const auto& waiting = blocked.formations[0].organization.smallGroups[15];
+        require(waiting.state == SmallGroupState::Waiting && waiting.offsetX > -0.7f && waiting.offsetZ == 0,
+            "Flank passed through an occupied route");
         BattleSimulation edge;
         edge.formations[0].x = 60; edge.formations[1].x = 59;
         edge.formations[0].z = edge.formations[1].z = 60;

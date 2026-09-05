@@ -78,6 +78,7 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
         throw std::invalid_argument("Soldier count must be even and between 2 and 10000.");
     Scene scene;
     scene.inspect = options.inspect;
+    scene.inspectAttack = options.inspectAttack;
     scene.headingOffset = static_cast<float>(options.directionOffset % 8) * DirectX::XM_PIDIV4;
     scene.soldierCount = options.inspect ? 16 : soldiers;
     makeAtlas(scene);
@@ -93,6 +94,13 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
                 std::copy_n(walk.data() + y * Scene::tileWidth * 8, Scene::tileWidth * 8,
                             scene.atlas.data() + (y + Scene::tileHeight) * Scene::atlasWidth + Scene::tileWidth * 4);
             scene.animatedSoldiers = true;
+        }
+        if (!options.attackSheet.empty()) {
+            const auto attack = loadSpriteSheet(options.attackSheet, Scene::tileWidth * 8, Scene::tileHeight * Scene::attackFrames);
+            for (unsigned y = 0; y < Scene::tileHeight * Scene::attackFrames; ++y)
+                std::copy_n(attack.data() + y * Scene::tileWidth * 8, Scene::tileWidth * 8,
+                    scene.atlas.data() + (y + Scene::attackRow * Scene::tileHeight) * Scene::atlasWidth + Scene::tileWidth * 4);
+            scene.attackSoldiers = true;
         }
     }
     constexpr int cells = 100;
@@ -196,14 +204,15 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
     if (!scene.inspect) scene.individuals->update(simulation);
     for (const auto& binding : scene.soldierBindings) {
         auto& sprite = scene.sprites[binding.spriteIndex];
-        const auto& formation = simulation.formations[binding.formation];
         float heading = binding.heading + scene.headingOffset;
         double animationTime = simulation.time;
         bool walking = simulation.time > 0;
+        bool attacking = scene.inspect && scene.inspectAttack;
         sprite.rightAxis = {}; sprite.upAxis = {};
         if (!scene.inspect) {
             const auto& soldier = scene.individuals->soldiers[binding.formation * SoldierVisuals::perTeam + binding.ordinal];
             heading = soldier.heading; animationTime = soldier.animationTime; walking = soldier.walking;
+            attacking = soldier.attacking;
             sprite.size = scene.generatedSoldiers ? DirectX::XMFLOAT2{3.4f, 3.4f} : DirectX::XMFLOAT2{1.7f, 2.7f};
             sprite.position = soldier.position;
             sprite.tint = binding.formation == 0 ? DirectX::XMFLOAT3{0.85f, 0.34f, 0.25f} : DirectX::XMFLOAT3{0.34f, 0.48f, 0.66f};
@@ -224,6 +233,7 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
                 const auto cameraRight = camera.right();
                 const auto cameraUp = scene.generatedSoldiers ? camera.up() : DirectX::XMFLOAT3{0, 1, 0};
                 const auto blend = [&](const DirectX::XMFLOAT3& a, const DirectX::XMFLOAT3& b) {
+                    if (eased >= 1) return b;
                     return DirectX::XMFLOAT3{a.x + (b.x - a.x) * eased, a.y + (b.y - a.y) * eased, a.z + (b.z - a.z) * eased};
                 };
                 sprite.rightAxis = blend(cameraRight, right); sprite.upAxis = blend(cameraUp, up);
@@ -232,16 +242,19 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
                 sprite.tile = scene.generatedSoldiers ? 4 : 0;
                 continue;
             }
-            if (formation.state == FormationState::Engaged) {
+            if (soldier.attacking && !scene.attackSoldiers) {
                 // Attack素材ができるまでの簡易な接触表現。
                 const float thrust = std::sin(static_cast<float>(std::fmod(animationTime * 12, 6.2831853))) * 0.15f;
-                sprite.position.x += std::cos(formation.heading) * thrust;
-                sprite.position.z += std::sin(formation.heading) * thrust;
+                sprite.position.x += std::cos(soldier.heading) * thrust;
+                sprite.position.z += std::sin(soldier.heading) * thrust;
             }
             sprite.position.y = terrainHeight(sprite.position.x, sprite.position.z) + 0.03f;
         }
         unsigned frame = 0;
-        if (scene.animatedSoldiers && walking)
+        if (scene.attackSoldiers && attacking) {
+            frame = Scene::attackRow + static_cast<unsigned>(std::fmod(animationTime * 8.0, Scene::attackFrames));
+            sprite.size = {5, 5};
+        } else if (scene.animatedSoldiers && walking)
             frame = 1 + (static_cast<unsigned>(std::fmod(animationTime * 8.0, 8.0)) + binding.phase) % Scene::walkFrames;
         sprite.tile = scene.generatedSoldiers ? 4 + camera.spriteDirection(heading) + frame * Scene::atlasColumns : 0;
     }

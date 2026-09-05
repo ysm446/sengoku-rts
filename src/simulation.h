@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include "organization.h"
 
 enum class FormationState { Idle, Marching, Engaged, Retreating, Routed };
 enum class BattleResult { Ongoing, RedVictory, BlueVictory, Draw };
@@ -15,6 +16,8 @@ struct Formation {
     float cohesion = 100;
     float morale = 100;
     FormationState state = FormationState::Idle;
+    Organization organization;
+    bool maneuverEnabled = true;
     bool defeated() const { return state == FormationState::Retreating || state == FormationState::Routed; }
 };
 
@@ -35,4 +38,5 @@ public:
 private:
     double accumulator = 0;
     void step(float seconds);
+    void updateSmallGroups(float seconds);
 };
