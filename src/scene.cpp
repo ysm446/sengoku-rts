@@ -80,6 +80,7 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     if (soldiers == 0 || soldiers > 10000 || soldiers % 2 != 0)
         throw std::invalid_argument("Soldier count must be even and between 2 and 10000.");
     Scene scene;
+    scene.unit = options.unit;
     scene.inspect = options.inspect;
     scene.inspectAttack = options.inspectAttack;
     scene.headingOffset = static_cast<float>(options.directionOffset % 8) * DirectX::XM_PIDIV4;
@@ -133,7 +134,7 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
             const unsigned tile = scene.generatedSoldiers ? 4 + (direction + options.directionOffset) % 8 : 0;
             const DirectX::XMFLOAT3 tint = team == 0 ? DirectX::XMFLOAT3{0.85f, 0.34f, 0.25f} : DirectX::XMFLOAT3{0.34f, 0.48f, 0.66f};
             add((-horizontal + depth) * 0.70710678f, (horizontal + depth) * 0.70710678f,
-                scene.generatedSoldiers ? 3.4f : 1.7f, scene.generatedSoldiers ? 3.4f : 2.7f, tile, tint);
+                scene.generatedSoldiers ? unitVisual(scene.unit).idleSize : 1.7f, scene.generatedSoldiers ? unitVisual(scene.unit).idleSize : 2.7f, tile, tint);
             scene.soldierBindings.push_back({scene.sprites.size() - 1, team, {},
                 Camera::initialYaw + static_cast<float>(direction) * DirectX::XM_PIDIV4, 0});
         }
@@ -240,6 +241,11 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
         double animationTime = simulation.time;
         bool walking = simulation.time > 0;
         bool attacking = scene.inspect && scene.inspectAttack;
+        if (scene.inspect && scene.generatedSoldiers) {
+            const float size = unitVisual(scene.unit).idleSize;
+            sprite.size = {size,size};
+        }
+        sprite.pivot = scene.generatedSoldiers ? unitVisual(scene.unit).idlePivot : 0;
         sprite.rightAxis = {}; sprite.upAxis = {};
         if (!scene.inspect) {
             const auto& soldier = scene.individuals->soldiers[binding.formation * SoldierVisuals::perTeam + binding.ordinal];
@@ -290,7 +296,9 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
         unsigned frame = 0;
         if (scene.attackSoldiers && attacking) {
             frame = Scene::attackRow + static_cast<unsigned>(std::fmod(animationTime * 8.0, Scene::attackFrames));
-            sprite.size = {5, 5};
+            const float size = unitVisual(scene.unit).attackSize;
+            sprite.size = {size, size};
+            sprite.pivot = .75f;
         } else if (scene.animatedSoldiers && walking)
             frame = 1 + (static_cast<unsigned>(std::fmod(animationTime * 8.0, 8.0)) + binding.phase) % Scene::walkFrames;
         sprite.tile = scene.generatedSoldiers ? 4 + camera.spriteDirection(heading) + frame * Scene::atlasColumns : 0;

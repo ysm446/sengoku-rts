@@ -1,6 +1,7 @@
 #pragma once
 #include "camera.h"
 #include "simulation.h"
+#include "unit_type.h"
 #include <DirectXMath.h>
 #include <cstdint>
 #include <filesystem>
@@ -21,6 +22,7 @@ struct SpriteInstance {
     DirectX::XMFLOAT3 tint;
     DirectX::XMFLOAT3 rightAxis{};
     DirectX::XMFLOAT3 upAxis{};
+    float pivot = 0; // 0は従来のタイル別Pivotを使用。
 };
 
 enum class SoldierLife { Alive, Falling, Fallen };
@@ -50,6 +52,7 @@ struct SoldierVisuals {
 };
 
 struct Scene {
+    UnitType unit = UnitType::Spearman;
     static constexpr unsigned tileWidth = 64;
     static constexpr unsigned tileHeight = 64;
     static constexpr unsigned atlasColumns = 12;
@@ -84,6 +87,7 @@ struct Scene {
 };
 
 struct SceneOptions {
+    UnitType unit = UnitType::Spearman;
     std::filesystem::path soldierSheet;
     std::filesystem::path walkSheet;
     std::filesystem::path attackSheet;

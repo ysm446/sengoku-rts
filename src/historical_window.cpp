@@ -9,14 +9,15 @@
 
 namespace {
 constexpr int sidebar=328;
+constexpr int initialWidth=1920, initialHeight=1080;
 struct Demo {
     history::Scenario scenario=history::sekigahara();
     history::Player player;
     Camera camera;
     const HistoricalScene* visual=nullptr;
     HWND window=nullptr, viewport=nullptr;
-    int width=1600,height=960, selected=-1, dragX=0;
-    bool arrows=true, orbit=false, scrubbing=false, battle=false;
+    int width=initialWidth,height=initialHeight, selected=-1, dragX=0;
+    bool arrows=true, orbit=false, scrubbing=false, battle=false, units=false;
     HFONT normal=nullptr, heading=nullptr, smallFont=nullptr;
     RECT map() const {return {16,84,width-sidebar-16,height-158};}
     RECT timeline() const {return {30,height-62,width-30,height-40};}
@@ -61,6 +62,7 @@ struct Demo {
             else if(x>=698 && x<828) arrows=!arrows;
             else if(x>=836 && x<950) resetCamera();
             else if(x>=width-170) {battle=true;DestroyWindow(window);return;}
+            else if(x>=width-328) {units=true;DestroyWindow(window);return;}
         }
         if(y>=height-84 && y<=height-23) {scrubbing=true;SetCapture(window);seekPixel(x);}
         const int sx=width-sidebar;
@@ -87,6 +89,7 @@ struct Demo {
         button(320,122,player.playing?L"一時停止":L"再生する");button(450,112,L"最初に戻る");
         button(570,120,std::to_wstring(static_cast<int>(player.speed))+L" 分 / 秒");button(698,130,arrows?L"進軍矢印 ON":L"進軍矢印 OFF");button(836,114,L"全景へ");
         button(width-170,150,L"戦闘試作へ");
+        button(width-328,150,L"兵種を見る");
         const int sx=width-sidebar;
         const auto& event=scenario.events[history::eventIndex(scenario,player.minute)];
         text(sx,91,300,24,L"局面  /  推定時刻",smallFont,RGB(165,179,183));
@@ -158,7 +161,7 @@ LRESULT CALLBACK demoProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) 
     case WM_ERASEBKGND:return 1;
     case WM_PAINT:if(!child){d->paint();return 0;}break;
     case WM_SIZE:if(!child && d->window)d->layout();return 0;
-    case WM_GETMINMAXINFO:reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize={1200,920};return 0;
+    case WM_GETMINMAXINFO:reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize={1320,920};return 0;
     case WM_KEYDOWN:if(!(lparam&(1LL<<30)))d->key(wparam);return 0;
     case WM_MOUSEWHEEL:d->camera.zoom(static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam))/WHEEL_DELTA);return 0;
     case WM_LBUTTONDOWN:SetFocus(d->window);if(child)d->pick(GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam));else d->click(GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam));return 0;
@@ -186,6 +189,17 @@ int runHistoricalDemo(HINSTANCE instance,int show,bool smoke,bool warp,const std
     d.window=CreateWindowExW(0,wc.lpszClassName,L"関ヶ原 | 史実再生デモ",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,
         CW_USEDEFAULT,CW_USEDEFAULT,bounds.right-bounds.left,bounds.bottom-bounds.top,nullptr,nullptr,instance,&d);
     if(!d.window)throw std::runtime_error("Cannot create historical demo window");
+    // 枠とタイトルバーを除き、実際のモニターDPIで1920×1080の領域を確保する。
+    RECT contentBounds{0,0,initialWidth,initialHeight};
+    if(!AdjustWindowRectExForDpi(&contentBounds,WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,FALSE,0,GetDpiForWindow(d.window)) ||
+        !SetWindowPos(d.window,nullptr,0,0,contentBounds.right-contentBounds.left,contentBounds.bottom-contentBounds.top,
+            SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE)) {
+        DestroyWindow(d.window);throw std::runtime_error("Cannot set historical content size");
+    }
+    RECT actualContent{};
+    if(!GetClientRect(d.window,&actualContent) || actualContent.right!=initialWidth || actualContent.bottom!=initialHeight) {
+        DestroyWindow(d.window);throw std::runtime_error("Historical content size does not match the requested resolution");
+    }
     d.viewport=CreateWindowExW(0,wc.lpszClassName,L"戦場",WS_CHILD|WS_VISIBLE,0,0,100,100,d.window,nullptr,instance,&d);
     if(!d.viewport){DestroyWindow(d.window);throw std::runtime_error("Cannot create historical viewport");}
     auto makeFont=[](int size,int weight){return CreateFontW(size,0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Yu Gothic UI");};
@@ -250,5 +264,5 @@ int runHistoricalDemo(HINSTANCE instance,int show,bool smoke,bool warp,const std
     if(IsWindow(d.window))DestroyWindow(d.window);DeleteObject(d.normal);DeleteObject(d.heading);DeleteObject(d.smallFont);
     // 次のモードへWM_QUITを持ち越さない。
     MSG message{};while(PeekMessageW(&message,nullptr,WM_QUIT,WM_QUIT,PM_REMOVE)){}
-    return d.battle?2:0;
+    return d.units?3:d.battle?2:0;
 }

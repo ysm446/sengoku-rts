@@ -42,6 +42,7 @@ struct WindowState {
     bool minimized = false;
     bool inspect = false, placeholder = false, sceneDirty = false, inspectAttack = false;
     unsigned direction = 0;
+    UnitType unit = UnitType::Spearman;
     BattleSimulation simulation;
     const Scene* scene = nullptr;
     int selected = -1;
@@ -216,6 +217,10 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     state->simulation.hold(static_cast<unsigned>(state->selected));
                 if (wparam == VK_F2) { state->inspect = !state->inspect; state->resetCamera(); state->sceneDirty = true; }
                 if (wparam == VK_F3 && state->inspect) { state->inspectAttack = !state->inspectAttack; state->sceneDirty = true; }
+                if (wparam == VK_F4 && state->inspect) {
+                    state->unit = static_cast<UnitType>((static_cast<unsigned>(state->unit) + 1) % unitVisuals.size());
+                    state->sceneDirty = true;
+                }
                 if (wparam == 'V') { state->placeholder = !state->placeholder; state->sceneDirty = true; }
                 if (state->inspect && (wparam == 'Z' || wparam == 'C')) {
                     state->direction = (state->direction + (wparam == 'Z' ? 7 : 1)) % 8;
@@ -243,6 +248,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 
 struct Options {
+    UnitType unit = UnitType::Spearman;
     bool historical = false;
     bool smoke = false, warp = false, inspect = false, placeholder = false;
     bool march = false, motionTest = false, combatTest = false, inspectAttack = false;
@@ -262,6 +268,15 @@ Options parseOptions() {
             if (arg == L"--smoke-test") options.smoke = true;
             else if (arg == L"--sekigahara") options.historical = true;
             else if (arg == L"--battle") options.historical = false;
+            else if (arg == L"--unit" && i + 1 < count) {
+                const std::wstring value = args[++i];
+                bool found = false;
+                for (unsigned unit = 0; unit < unitVisuals.size(); ++unit) if (value == unitVisuals[unit].assetPrefix) {
+                    options.unit = static_cast<UnitType>(unit); found = true; break;
+                }
+                if (!found) throw std::runtime_error("--unit accepts ashigaru, samurai, archer or cavalry");
+                options.inspect = true;
+            }
             else if (arg == L"--warp") options.warp = true;
             else if (arg == L"--inspect") options.inspect = true;
             else if (arg == L"--inspect-attack") { options.inspect = true; options.inspectAttack = true; options.march = true; }
@@ -304,10 +319,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         options = parseOptions();
         if (options.historical) {
             const int result = runHistoricalDemo(instance, show, options.smoke, options.warp, options.capture, executableDirectory(), options.yawDegrees);
-            if (result != 2) return result;
+            if (result == 3) {options.inspect = true; options.unit = UnitType::Samurai;}
+            else if (result != 2) return result;
         }
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         WindowState state; state.requestedSoldiers = options.soldiers;
+        state.unit = options.unit;
         if (!options.smoke) {
             state.audioSettingsPath = executableDirectory() / L"audio-settings.txt";
             state.audioSettings.load(state.audioSettingsPath);
@@ -343,15 +360,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         BattleAudio audio(!options.smoke);
         BattleImpactTracker impactTracker;
         state.audio = &audio;
-        const auto sheetPath = executableDirectory() / L"assets/sprites/ashigaru_idle.png";
-        const auto walkPath = executableDirectory() / L"assets/sprites/ashigaru_walk.png";
-        const auto attackPath = executableDirectory() / L"assets/sprites/ashigaru_attack.png";
         Scene activeScene;
         state.scene = &activeScene;
         unsigned requestedSoldiers = options.soldiers, displayedSoldiers = 0;
         bool generatedSoldiers = false;
         const auto rebuildScene = [&] {
             SceneOptions sceneOptions;
+            sceneOptions.unit = state.inspect ? state.unit : UnitType::Spearman;
+            const std::wstring prefix = unitVisual(sceneOptions.unit).assetPrefix;
+            const auto assetDirectory = executableDirectory() / L"assets/sprites";
+            const auto sheetPath = assetDirectory / (prefix + L"_idle.png");
+            const auto walkPath = assetDirectory / (prefix + L"_walk.png");
+            const auto attackPath = assetDirectory / (prefix + L"_attack.png");
+            if (sceneOptions.unit != UnitType::Spearman && !state.placeholder &&
+                (!std::filesystem::exists(sheetPath) || !std::filesystem::exists(walkPath) || !std::filesystem::exists(attackPath)))
+                throw std::runtime_error("Selected unit sprite sheets are missing");
             if (!state.placeholder && std::filesystem::exists(sheetPath)) {
                 sceneOptions.soldierSheet = sheetPath;
                 if (std::filesystem::exists(walkPath)) sceneOptions.walkSheet = walkPath;
@@ -366,6 +389,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             renderer.setScene(activeScene); state.sceneDirty = false; requestedSoldiers = state.requestedSoldiers;
         };
         rebuildScene();
+        if (options.smoke && state.inspect && options.unit != UnitType::Spearman) {
+            const auto original = state.unit;
+            for (unsigned step = 0; step < unitVisuals.size(); ++step) {
+                const auto previousUnit = state.unit;
+                SendMessageW(window, WM_KEYDOWN, VK_F4, 0);
+                if (state.unit == previousUnit || !state.sceneDirty) throw std::runtime_error("Unit switching failed");
+                rebuildScene();
+                if (activeScene.unit != state.unit || !activeScene.attackSoldiers) throw std::runtime_error("Unit assets failed to load");
+            }
+            if (state.unit != original) throw std::runtime_error("Unit cycle did not return to the original");
+        }
         if ((options.combatTest || options.inspectAttack) && !options.placeholder && !activeScene.attackSoldiers)
             throw std::runtime_error("Attack sprite sheet is required for this test");
         if (options.smoke && !state.inspect) {
@@ -533,7 +567,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 const int fps = titleSeconds > 0 ? static_cast<int>(titleFrames / titleSeconds) : 0;
                 const auto title = std::wstring(L"戦国合戦 | ") + (state.inspect ? L"素材確認" : state.selectionStatus()) + L" | " +
                     (state.inspect ? L"" : battleStatus(state.simulation)) + L" | " +
-                    (generatedSoldiers ? L"Blender槍足軽" : L"仮素材") +
+                    (generatedSoldiers ? unitVisual(activeScene.unit).name : L"仮素材") +
                     (state.inspect ? L" 素材確認 | " : L" 戦場 | ") + L"表示上限 " + std::to_wstring(displayedSoldiers) + L" | " +
                     std::to_wstring(fps) + L" fps | " + (state.inspect ? L"素材確認" :
                         (state.selected == 0 ? L"赤部隊を選択" : state.selected == 1 ? L"青部隊を選択" : L"選択なし")) +
@@ -542,7 +576,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                         state.audioSettings.selected == AudioBus::Environment ? L"環境 " : L"効果音 ") +
                     std::to_wstring(state.audioSettings.percent[static_cast<unsigned>(state.audioSettings.selected)]) + L"%]" +
                     (state.audioSaveFailed ? L" 音量保存失敗" : L"") +
-                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 M:消音 F5:音量対象 +/-:調整";
+                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 M:消音 F5:音量対象 +/-:調整";
                 SetWindowTextW(window, title.c_str()); titleSeconds = 0; titleFrames = 0;
             }
             if (options.smoke && frame >= smokeFrames) break;

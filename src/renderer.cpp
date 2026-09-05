@@ -168,7 +168,8 @@ void Renderer::createPipelines(const std::filesystem::path& shader) {
         {"TILE", 0, DXGI_FORMAT_R32_UINT, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
         {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
         {"RIGHTAXIS", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
-        {"UPAXIS", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1}
+        {"UPAXIS", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
+        {"PIVOT", 0, DXGI_FORMAT_R32_FLOAT, 0, 60, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1}
     };
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
     desc.pRootSignature = root_.Get();
@@ -184,7 +185,7 @@ void Renderer::createPipelines(const std::filesystem::path& shader) {
     desc.DSVFormat = DXGI_FORMAT_D32_FLOAT; desc.SampleDesc.Count = 1;
     check(device_->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&terrainPipeline_)), "Create terrain pipeline");
     desc.VS = {sv->GetBufferPointer(), sv->GetBufferSize()}; desc.PS = {sp->GetBufferPointer(), sp->GetBufferSize()};
-    desc.InputLayout = {spriteLayout, 6};
+    desc.InputLayout = {spriteLayout, 7};
     check(device_->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&spritePipeline_)), "Create sprite pipeline");
 }
 

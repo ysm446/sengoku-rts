@@ -36,6 +36,14 @@ add_custom_command(TARGET sengoku_assets POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/sprites/ashigaru_attack.png"
         "$<TARGET_FILE_DIR:sengoku_rts>/assets/sprites/ashigaru_attack.png")
 add_dependencies(sengoku_rts sengoku_assets)
+foreach(unit samurai archer cavalry)
+    foreach(animation idle walk attack)
+        add_custom_command(TARGET sengoku_assets POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/sprites/${unit}_${animation}.png"
+                "$<TARGET_FILE_DIR:sengoku_rts>/assets/sprites/${unit}_${animation}.png")
+    endforeach()
+endforeach()
 # HLSLは実行時にコンパイルする。編集時にもコピーを更新する。
 set_property(TARGET sengoku_rts APPEND PROPERTY LINK_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/battlefield.hlsl")
@@ -47,6 +55,13 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(unit_assets_tests tests/unit_assets_tests.cpp)
+    target_link_libraries(unit_assets_tests PRIVATE sengoku_scene)
+    add_test(NAME unit_assets COMMAND unit_assets_tests "${CMAKE_CURRENT_SOURCE_DIR}/assets/sprites")
+    foreach(unit samurai archer cavalry)
+        add_test(NAME dx12_${unit} COMMAND sengoku_rts --smoke-test --unit ${unit} --inspect-attack --capture "${CMAKE_BINARY_DIR}/${unit}.bmp")
+        set_tests_properties(dx12_${unit} PROPERTIES TIMEOUT 60)
+    endforeach()
     add_executable(historical_tests tests/historical_tests.cpp)
     target_link_libraries(historical_tests PRIVATE sengoku_scene)
     add_test(NAME historical_scenario COMMAND historical_tests)
