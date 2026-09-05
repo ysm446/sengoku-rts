@@ -1,0 +1,6 @@
+/build/
+/out/
+/.vs/
+/docs/references/
+__pycache__/
+*.pyc
