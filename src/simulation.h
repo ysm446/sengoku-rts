@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <cstdint>
 
 enum class FormationState { Idle, Marching, Engaged, Retreating, Routed };
 enum class BattleResult { Ongoing, RedVictory, BlueVictory, Draw };
@@ -28,6 +29,7 @@ public:
     void toggle() { running = !running; }
     bool running = false;
     double time = 0;
+    std::uint64_t generation = 0;
     std::array<Formation, 2> formations;
     BattleResult result = BattleResult::Ongoing;
 private:

@@ -245,7 +245,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 if (std::filesystem::exists(walkPath)) sceneOptions.walkSheet = walkPath;
             }
             sceneOptions.inspect = state.inspect; sceneOptions.directionOffset = state.inspect ? state.direction : 0;
+            auto individuals = activeScene.individuals;
             activeScene = makeScene(state.requestedSoldiers, sceneOptions);
+            activeScene.individuals = std::move(individuals);
             displayedSoldiers = activeScene.soldierCount; generatedSoldiers = activeScene.generatedSoldiers;
             renderer.setScene(activeScene); state.sceneDirty = false; requestedSoldiers = state.requestedSoldiers;
         };

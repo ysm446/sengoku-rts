@@ -1,7 +1,7 @@
 # 開発・起動・検証手順
 
 作成日時: 2026-09-05 10:13
-更新日時: 2026-09-05 11:29
+更新日時: 2026-09-05 11:41
 
 ## 必要環境
 
@@ -55,6 +55,8 @@ Spaceで進軍すると接触戦闘が始まり、士気・隊列・兵力の低
 
 ## 自動検証と画像保存
 
+`scene_invariants`では個体ごとの追従・歩行時計、倒れた位置と姿勢の保持、一時停止、表示人数切り替え、初期化も確認する。倒れた兵士はHomeで初期化するまで保持される。[個体表示の実装範囲](individual_soldiers.md)を参照。
+
 - `battle_simulation`：固定更新、接触戦闘、停止・離脱、士気・隊列の低下、対称条件の勝敗、撤退と初期化を確認。
 - `dx12_combat`：80フレームで80秒の戦闘を進め、交戦・撤退・勝敗を検証。`build/combat.bmp.engaged.bmp`と`build/combat.bmp`へ交戦中と終了時を保存。`--combat-test`は`--soldiers 10000`・`--warp`とも併用可能（`--inspect`・`--motion-test`との併用は不可）。
 
@@ -83,6 +85,7 @@ $capturePath = Join-Path (Get-Location).Path 'build/smoke-10000.bmp'
 - `src/camera.h`：俯角固定・水平360°回転のOrthographic Camera、画面基準のPan / Zoom、兵士の相対方向計算。
 - `src/simulation.cpp`：2部隊の固定刻み更新、進軍・命令、接触戦闘・損害・士気・隊列・自動撤退・勝敗。表示兵士数から独立した状態更新。
 - `src/scene.cpp`：地形・Atlas・各素材の配置、部隊位置とカメラ方位に応じた兵士位置・歩行フレームの更新。
+- `src/soldier_visuals.cpp`：表示用IDに基づく兵士ごとの追従位置・動作時計・生存状態・死亡位置の保持。描画用の姿勢はSceneからInstanceへ渡す。
 - `src/renderer.cpp`：DX12の初期化、深度バッファ、Atlas転送、Instancing、リサイズ、画像保存。
 - `shaders/battlefield.hlsl`：地形とSpriteの描画。実行時にコンパイルし、ビルド時に実行ファイルの隣へコピーする。
 

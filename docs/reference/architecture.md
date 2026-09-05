@@ -1,7 +1,7 @@
 # 設計概要
 
 作成日時: 2026-09-05 09:53
-更新日時: 2026-09-05 11:29
+更新日時: 2026-09-05 11:41
 
 [技術仕様 Draft 0.1](../戦国合戦シミュレーター%20技術仕様%20Draft%200.1.md)の要約。以下は主に設計上の構成を示す。現在の実装範囲は[開発手順](development.md)と[進捗](../plan/progress.md)を参照する。
 
@@ -25,7 +25,7 @@ Formationの状態をSoldier Spriteの配置・向き・アニメーションに
 
 描画はInstance BufferをGPUへ送り、`DrawIndexedInstanced`などを使用する方針。1,000体から検証を始め、5,000体・10,000体へ測定範囲を広げる。
 
-現在は`src/simulation.cpp`が2つのFormationの位置・向き・移動先・速度を更新する。`updateSceneSprites`が部隊状態から表示兵士の位置・方向・歩行フレームを算出し、RendererはInstance Bufferだけを更新する。表示兵士数を変更してもSimulationの部隊数は変わらない。
+現在は`src/simulation.cpp`が2つのFormationの位置・向き・命令・戦闘状態を更新する。`src/soldier_visuals.cpp`が部隊状態を受けて個体ごとの追従位置・動作時計・生存状態を保持し、`updateSceneSprites`が表示兵士の位置・姿勢・歩行フレームを算出する。RendererはInstance Bufferだけを更新する。表示兵士数を変更してもSimulationの部隊数や戦闘結果は変わらない。[個体表示の設計](individual_soldiers.md)を参照。
 
 水平回転ではCameraの右・上ベクトルをShaderへ渡してSpriteの板を追従させる。兵士のSprite方向は世界方位からCamera方位を引き、最も近い45度単位へ丸める。俯角は素材生成時と同じ約40.316度を保つ。木・旗・陣幕は1方向の仮素材で、カメラ側を向く簡易表現のまま。
 

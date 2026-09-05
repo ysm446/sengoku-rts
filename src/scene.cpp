@@ -1,5 +1,4 @@
 #include "scene.h"
-#include <numeric>
 #include "sprite_sheet.h"
 #include <algorithm>
 #include <cmath>
@@ -131,18 +130,18 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     }
     for (unsigned team = 0; team < 2; ++team) {
         const DirectX::XMFLOAT3 tint = team == 0 ? DirectX::XMFLOAT3{0.85f, 0.34f, 0.25f} : DirectX::XMFLOAT3{0.34f, 0.48f, 0.66f};
-        const unsigned columns = static_cast<unsigned>(std::ceil(std::sqrt(static_cast<float>(soldiers / 2))));
-        const float spacing = std::min(1.2f, 26.0f / static_cast<float>(columns));
         for (unsigned i = 0; i < soldiers / 2; ++i) {
-            const float x = (static_cast<float>(i % columns) - static_cast<float>(columns - 1) * 0.5f) * spacing;
+            const unsigned id = i * SoldierVisuals::perTeam / (soldiers / 2);
+            const auto relative = SoldierVisuals::offset(id);
+            const float x = relative.x;
             const float centerZ = team == 0 ? -22.0f : 22.0f;
-            const float offsetZ = (static_cast<float>(i / columns) - static_cast<float>(columns - 1) * 0.5f) * spacing;
+            const float offsetZ = relative.y;
             const float z = centerZ + offsetZ;
             // 初期の2陣営は互いの側を向く。方向は画面基準の8方向。
             const unsigned direction = (team == 0 ? 1 : 5) + options.directionOffset;
             add(x, z, scene.generatedSoldiers ? 3.4f : 1.7f, scene.generatedSoldiers ? 3.4f : 2.7f,
                 scene.generatedSoldiers ? 4 + direction % 8 : 0, tint);
-            scene.soldierBindings.push_back({scene.sprites.size() - 1, team, {x, offsetZ}, 0, i % 8, i});
+            scene.soldierBindings.push_back({scene.sprites.size() - 1, team, {x, offsetZ}, 0, i % 8, id});
         }
         for (int i = 0; i < 6; ++i) {
             add(-14.0f + i * 5.6f, team == 0 ? -33.0f : 33.0f, 2.1f, 5.5f, 1, tint);
@@ -194,40 +193,56 @@ std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& c
 }
 
 void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected) {
-    const unsigned teamCount = scene.soldierCount / 2;
-    if (teamCount == 0) return;
-    unsigned casualtyStride = 137;
-    while (std::gcd(casualtyStride, teamCount) != 1) ++casualtyStride;
+    if (!scene.inspect) scene.individuals->update(simulation);
     for (const auto& binding : scene.soldierBindings) {
         auto& sprite = scene.sprites[binding.spriteIndex];
         const auto& formation = simulation.formations[binding.formation];
+        float heading = binding.heading + scene.headingOffset;
+        double animationTime = simulation.time;
+        bool walking = simulation.time > 0;
+        sprite.rightAxis = {}; sprite.upAxis = {};
         if (!scene.inspect) {
-            const unsigned survivors = static_cast<unsigned>(std::ceil((scene.soldierCount / 2) * formation.strength / 500));
-            sprite.size = (binding.ordinal * casualtyStride) % teamCount < survivors ?
-                (scene.generatedSoldiers ? DirectX::XMFLOAT2{3.4f, 3.4f} : DirectX::XMFLOAT2{1.7f, 2.7f}) : DirectX::XMFLOAT2{0, 0};
+            const auto& soldier = scene.individuals->soldiers[binding.formation * SoldierVisuals::perTeam + binding.ordinal];
+            heading = soldier.heading; animationTime = soldier.animationTime; walking = soldier.walking;
+            sprite.size = scene.generatedSoldiers ? DirectX::XMFLOAT2{3.4f, 3.4f} : DirectX::XMFLOAT2{1.7f, 2.7f};
+            sprite.position = soldier.position;
             sprite.tint = binding.formation == 0 ? DirectX::XMFLOAT3{0.85f, 0.34f, 0.25f} : DirectX::XMFLOAT3{0.34f, 0.48f, 0.66f};
-            if (static_cast<int>(binding.formation) == selected) {
+            if (static_cast<int>(binding.formation) == selected && soldier.life == SoldierLife::Alive) {
                 sprite.tint.x = std::min(1.0f, sprite.tint.x + 0.2f);
                 sprite.tint.y += 0.2f; sprite.tint.z += 0.12f;
             }
-            sprite.position.x = formation.x + binding.offset.x;
-            sprite.position.z = formation.z + binding.offset.y;
-            const float disorder = (1 - formation.cohesion / 100) * 0.6f;
-            sprite.position.x += std::sin(static_cast<float>(binding.ordinal) * 2.4f) * disorder;
-            sprite.position.z += std::cos(static_cast<float>(binding.ordinal) * 1.7f) * disorder;
+            if (soldier.life != SoldierLife::Alive) {
+                const float fall = std::clamp(static_cast<float>((simulation.time - soldier.deathTime) / 0.8), 0.0f, 1.0f);
+                const float eased = fall * fall * (3 - 2 * fall);
+                const auto groundAxis = [&](float x, float z) {
+                    const float slope = (terrainHeight(sprite.position.x + x * 0.5f, sprite.position.z + z * 0.5f) -
+                        terrainHeight(sprite.position.x - x * 0.5f, sprite.position.z - z * 0.5f));
+                    return DirectX::XMFLOAT3{x, slope, z};
+                };
+                const auto right = groundAxis(-std::sin(heading), std::cos(heading));
+                const auto up = groundAxis(std::cos(heading), std::sin(heading));
+                const auto cameraRight = camera.right();
+                const auto cameraUp = scene.generatedSoldiers ? camera.up() : DirectX::XMFLOAT3{0, 1, 0};
+                const auto blend = [&](const DirectX::XMFLOAT3& a, const DirectX::XMFLOAT3& b) {
+                    return DirectX::XMFLOAT3{a.x + (b.x - a.x) * eased, a.y + (b.y - a.y) * eased, a.z + (b.z - a.z) * eased};
+                };
+                sprite.rightAxis = blend(cameraRight, right); sprite.upAxis = blend(cameraUp, up);
+                sprite.position.y += 0.05f;
+                // 倒れた図柄は世界方向に固定し、カメラ回転でSpriteを切り替えない。
+                sprite.tile = scene.generatedSoldiers ? 4 : 0;
+                continue;
+            }
             if (formation.state == FormationState::Engaged) {
                 // Attack素材ができるまでの簡易な接触表現。
-                const float thrust = std::sin(static_cast<float>(std::fmod(simulation.time * 12, 6.2831853)) + binding.phase) * 0.15f;
+                const float thrust = std::sin(static_cast<float>(std::fmod(animationTime * 12, 6.2831853))) * 0.15f;
                 sprite.position.x += std::cos(formation.heading) * thrust;
                 sprite.position.z += std::sin(formation.heading) * thrust;
             }
             sprite.position.y = terrainHeight(sprite.position.x, sprite.position.z) + 0.03f;
         }
-        const float heading = (scene.inspect ? binding.heading : formation.heading) + scene.headingOffset;
         unsigned frame = 0;
-        const bool walking = scene.inspect ? simulation.time > 0 : formation.moving;
         if (scene.animatedSoldiers && walking)
-            frame = 1 + (static_cast<unsigned>(std::fmod(simulation.time * 8.0, 8.0)) + binding.phase) % Scene::walkFrames;
+            frame = 1 + (static_cast<unsigned>(std::fmod(animationTime * 8.0, 8.0)) + binding.phase) % Scene::walkFrames;
         sprite.tile = scene.generatedSoldiers ? 4 + camera.spriteDirection(heading) + frame * Scene::atlasColumns : 0;
     }
 }

@@ -10,7 +10,7 @@ configure_file(src/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/app.rc" PROPERTIES
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/sengoku-rts-v2.ico")
 
-add_library(sengoku_scene src/scene.cpp src/sprite_sheet.cpp src/simulation.cpp)
+add_library(sengoku_scene src/scene.cpp src/sprite_sheet.cpp src/simulation.cpp src/soldier_visuals.cpp)
 target_link_libraries(sengoku_scene PUBLIC windowscodecs ole32)
 target_include_directories(sengoku_scene PUBLIC src)
 target_compile_features(sengoku_scene PUBLIC cxx_std_20)

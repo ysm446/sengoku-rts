@@ -218,16 +218,64 @@ int wmain(int argc, wchar_t** argv) {
             unsigned visible = 0;
             for (const auto& binding : casualtyScene.soldierBindings) {
                 const auto& sprite = casualtyScene.sprites[binding.spriteIndex];
-                if (sprite.size.x > 0) ++visible;
+                const auto& individual = casualtyScene.individuals->soldiers[binding.formation * SoldierVisuals::perTeam + binding.ordinal];
+                if (individual.life == SoldierLife::Alive) ++visible;
+                require(sprite.size.x > 0, "Casualty disappeared instead of falling");
                 require(std::isfinite(sprite.position.x) && std::abs(sprite.position.y -
-                    terrainHeight(sprite.position.x, sprite.position.z) - 0.03f) < 0.0001f, "Disordered soldier lost ground contact");
+                    terrainHeight(sprite.position.x, sprite.position.z) - (individual.life == SoldierLife::Alive ? 0.03f : 0.08f)) < 0.0001f,
+                    "Disordered soldier lost ground contact");
             }
             require(visible == count * 3 / 4, "Casualties did not scale with display count");
             losses.reset(); updateSceneSprites(casualtyScene, losses, Camera{});
             for (const auto& binding : casualtyScene.soldierBindings)
                 require(casualtyScene.sprites[binding.spriteIndex].size.x > 0, "Reset did not restore casualty sprites");
         }
-        std::cout << "Scene and camera checks passed\n";
+        auto individualsScene = makeScene(1000, walkingOptions);
+        BattleSimulation individualsBattle;
+        updateSceneSprites(individualsScene, individualsBattle, Camera{});
+        const auto initial0 = individualsScene.individuals->soldiers[0].position;
+        const auto initial10 = individualsScene.individuals->soldiers[10].position;
+        individualsBattle.toggle();
+        for (unsigned step = 0; step < 60; ++step) {
+            individualsBattle.update(1.0f / 60);
+            updateSceneSprites(individualsScene, individualsBattle, Camera{});
+        }
+        const auto& individual0 = individualsScene.individuals->soldiers[0];
+        const auto& individual10 = individualsScene.individuals->soldiers[10];
+        require(std::abs((individual0.position.z - initial0.z) - (individual10.position.z - initial10.z)) > 0.01f,
+            "Individuals move as one rigid formation");
+        require(individual0.walking && individual10.walking && individual0.animationTime != individual10.animationTime,
+            "Individual walk clocks are not independent");
+        individualsBattle.formations[0].strength = 250;
+        updateSceneSprites(individualsScene, individualsBattle, Camera{});
+        std::size_t casualty = 0;
+        while (individualsScene.individuals->soldiers[casualty].life == SoldierLife::Alive) ++casualty;
+        const auto death = individualsScene.individuals->soldiers[casualty];
+        require(death.life == SoldierLife::Falling, "Death skipped falling state");
+        individualsBattle.toggle();
+        individualsBattle.update(10);
+        updateSceneSprites(individualsScene, individualsBattle, camera);
+        require(individualsScene.individuals->soldiers[casualty].life == SoldierLife::Falling,
+            "Fall animation advanced while paused");
+        individualsBattle.toggle(); individualsBattle.update(1);
+        updateSceneSprites(individualsScene, individualsBattle, Camera{});
+        const auto& fallen = individualsScene.individuals->soldiers[casualty];
+        require(fallen.life == SoldierLife::Fallen && fallen.position.x == death.position.x && fallen.position.z == death.position.z &&
+            fallen.heading == death.heading, "Corpse moved with its formation");
+        auto rebuilt = makeScene(10000, walkingOptions);
+        rebuilt.individuals = individualsScene.individuals;
+        updateSceneSprites(rebuilt, individualsBattle, Camera{});
+        const auto corpseSprite = rebuilt.sprites[rebuilt.soldierBindings[casualty].spriteIndex];
+        camera.rotate(1.7f); updateSceneSprites(rebuilt, individualsBattle, camera);
+        const auto rotatedCorpse = rebuilt.sprites[rebuilt.soldierBindings[casualty].spriteIndex];
+        require(corpseSprite.tile == rotatedCorpse.tile && corpseSprite.position.z == rotatedCorpse.position.z &&
+            corpseSprite.rightAxis.x == rotatedCorpse.rightAxis.x && corpseSprite.upAxis.z == rotatedCorpse.upAxis.z,
+            "Corpse changed pose after camera rotation or display density change");
+        require(std::abs(corpseSprite.upAxis.y) < 0.5f && corpseSprite.size.x > 0, "Corpse is not lying on terrain");
+        individualsBattle.reset(); updateSceneSprites(rebuilt, individualsBattle, camera);
+        for (const auto& soldier : rebuilt.individuals->soldiers)
+            require(soldier.life == SoldierLife::Alive, "Reset left a corpse behind");
+        std::cout << "Scene, camera and individual soldier checks passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

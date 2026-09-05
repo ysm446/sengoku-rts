@@ -22,6 +22,7 @@ void BattleSimulation::hold(unsigned index) {
     formation.state = FormationState::Idle;
 }
 void BattleSimulation::reset() {
+    ++generation;
     running = false; time = 0; accumulator = 0; result = BattleResult::Ongoing;
     // 最小デモの配置と移動先。関ヶ原のデータではない。
     formations = {{{0, -22, 0, 0, DirectX::XM_PIDIV2, 1.8f, false},

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <vector>
 #include <optional>
+#include <memory>
 
 struct TerrainVertex {
     DirectX::XMFLOAT3 position;
@@ -18,6 +19,28 @@ struct SpriteInstance {
     DirectX::XMFLOAT2 size;
     std::uint32_t tile;
     DirectX::XMFLOAT3 tint;
+    DirectX::XMFLOAT3 rightAxis{};
+    DirectX::XMFLOAT3 upAxis{};
+};
+
+enum class SoldierLife { Alive, Falling, Fallen };
+struct SoldierVisual {
+    DirectX::XMFLOAT3 position{};
+    float heading = 0;
+    double animationTime = 0;
+    double deathTime = 0;
+    bool walking = false;
+    SoldierLife life = SoldierLife::Alive;
+};
+
+// 表示密度を変えても同じ兵士の位置・死亡状態を保持する固定IDの表示用集団。
+struct SoldierVisuals {
+    static constexpr unsigned perTeam = 5000;
+    std::vector<SoldierVisual> soldiers;
+    std::uint64_t generation = 0;
+    double time = 0;
+    void update(const BattleSimulation& simulation);
+    static DirectX::XMFLOAT2 offset(unsigned id);
 };
 
 struct Scene {
@@ -36,6 +59,7 @@ struct Scene {
     bool animatedSoldiers = false;
     bool inspect = false;
     float headingOffset = 0;
+    std::shared_ptr<SoldierVisuals> individuals = std::make_shared<SoldierVisuals>();
     struct SoldierBinding {
         std::size_t spriteIndex;
         unsigned formation;
