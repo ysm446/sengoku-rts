@@ -59,6 +59,26 @@ int main() {
         }
         const auto noContact = allocateContactFronts({}, 17.5f);
         require(noContact.fighters() == 0 && noContact.reserve == 17.5f, "Unengaged group lost its reserves");
+        FaceDeployment deployment;
+        const auto frontTarget = allocateContactFronts(frontal, 5);
+        advanceFaceDeployment(deployment, frontTarget, 5, 0.1f);
+        require(close(deployment.deployed[0], 0.2f) && close(deployment.reserve(), 4.8f), "Reserve arrived instantly");
+        for (unsigned tick = 0; tick < 150; ++tick) advanceFaceDeployment(deployment, frontTarget, 5, 1.0f / 60);
+        require(close(deployment.deployed[0], 5), "Deployment did not converge");
+        ContactFronts rearOnly; rearOnly.faces[2] = frontal.faces[0];
+        const auto rearTarget = allocateContactFronts(rearOnly, 5);
+        advanceFaceDeployment(deployment, rearTarget, 5, 0.1f);
+        require(close(deployment.deployed[0], 4.8f) && close(deployment.deployed[2], 0), "Soldiers teleported between fronts");
+        for (unsigned tick = 0; tick < 360; ++tick) {
+            advanceFaceDeployment(deployment, rearTarget, 5, 1.0f / 60);
+            require(close(deployment.total() + deployment.reserve(), 5) && deployment.total() <= 5.0001f,
+                "Redeployment duplicated soldiers");
+        }
+        require(close(deployment.deployed[2], 5) && close(deployment.deployed[0], 0), "Rear deployment never finished");
+        advanceFaceDeployment(deployment, allocateContactFronts(rearOnly, 2.5f), 2.5f, 0);
+        require(close(deployment.total(), 2.5f), "Casualties remained deployed");
+        advanceFaceDeployment(deployment, allocateContactFronts({}, 2.5f), 2.5f, 0.1f);
+        require(close(deployment.total(), 2.3f) && close(deployment.reserve(), 0.2f), "Disengagement skipped withdrawal time");
         auto shared = bodies;
         shared[1][0].position.z = 2.3f;
         shared[1][1] = {{6, -2.3f}, 3.14159265f, true, true};
@@ -80,10 +100,20 @@ int main() {
         BattleSimulation simulation;
         simulation.toggle(); simulation.update(10);
         const auto before = simulation;
+        require(simulation.formations[0].organization.smallGroups[22].faceDeployment.total() > 0,
+            "Simulation did not advance face deployment");
         const auto observation = simulation.contactFronts(0, 22);
         (void)observation;
         require(simulation.time == before.time && simulation.formations[0].strength == before.formations[0].strength &&
             simulation.formations[1].strength == before.formations[1].strength, "Observation changed battle state");
+        simulation.toggle(); simulation.update(1);
+        require(simulation.formations[0].organization.smallGroups[22].faceDeployment.deployed ==
+            before.formations[0].organization.smallGroups[22].faceDeployment.deployed, "Pause advanced deployment");
+        simulation.toggle();
+        simulation.formations[0].organization.smallGroups[22].morale = 20;
+        simulation.update(1.0f / 60);
+        require(simulation.formations[0].organization.smallGroups[22].routed &&
+            simulation.formations[0].organization.smallGroups[22].faceDeployment.total() == 0, "Routed group retained combat deployment");
         simulation.result = BattleResult::RedVictory;
         for (const auto& face : simulation.contactFronts(0, 22).faces) require(face.width() == 0, "Finished battle kept contact fronts");
         std::cout << "Contact front geometry checks passed\n";

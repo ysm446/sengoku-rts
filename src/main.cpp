@@ -110,18 +110,20 @@ struct WindowState {
         const auto fronts = simulation.contactFronts(static_cast<unsigned>(selected), static_cast<unsigned>(selectedGroup));
         float totalWidth = 0;
         for (const auto& face : fronts.faces) totalWidth += face.width();
-        if (totalWidth > 0) {
-            const auto allocation = allocateContactFronts(fronts, group.strength);
+        if (totalWidth > 0 || group.faceDeployment.total() > 0.01f) {
+            const bool returning = group.route == SmallGroupRoute::Returning || group.route == SmallGroupRoute::ReliefReserve ||
+                group.route == SmallGroupRoute::ReliefWithdraw;
+            const auto allocation = allocateContactFronts(returning ? ContactFronts{} : fronts, group.strength);
             const auto decimal = [](float value) {
                 const int tenths = static_cast<int>(std::round(value * 10));
                 return std::to_wstring(tenths / 10) + L"." + std::to_wstring(tenths % 10);
             };
             const wchar_t* names[] = {L"前", L"右", L"後", L"左"};
-            text += L" [幅/参加案";
-            for (unsigned face = 0; face < 4; ++face) if (fronts.faces[face].width() > 0) {
-                text += std::wstring(L" ") + names[face] + decimal(fronts.faces[face].width()) + L"/" + decimal(allocation.faces[face].fighters()) + L"人";
+            text += L" [配置試算 現在→目標";
+            for (unsigned face = 0; face < 4; ++face) if (fronts.faces[face].width() > 0 || group.faceDeployment.deployed[face] > 0.01f) {
+                text += std::wstring(L" ") + names[face] + decimal(group.faceDeployment.deployed[face]) + L"→" + decimal(allocation.faces[face].fighters()) + L"人";
             }
-            text += L" 予備案" + decimal(allocation.reserve) + L"人]";
+            text += L" 予備" + decimal(group.faceDeployment.reserve()) + L"人]";
         }
         if (simulation.result == BattleResult::Ongoing && !group.routed && !group.canAttack && group.route == SmallGroupRoute::None && !simulation.formations[static_cast<unsigned>(selected)].defeated()) {
             const wchar_t* reason = group.combatWait == CombatWait::NoTarget ? L"近くに攻撃対象なし" :

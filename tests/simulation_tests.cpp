@@ -20,6 +20,11 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
         for (unsigned id = 0; id < 25; ++id) {
             const auto& g = x.organization.smallGroups[id];
             const auto& h = y.organization.smallGroups[id];
+            require(std::abs(g.faceDeployment.accountedStrength - h.faceDeployment.accountedStrength) < 0.001f,
+                "Deployment strength depends on update interval");
+            for (unsigned face = 0; face < 4; ++face)
+                require(std::abs(g.faceDeployment.deployed[face] - h.faceDeployment.deployed[face]) < 0.001f,
+                    "Face deployment depends on update interval");
             require(g.state == h.state && std::abs(g.offsetX - h.offsetX) < 0.001f &&
                 std::abs(g.offsetZ - h.offsetZ) < 0.001f && std::abs(g.fatigue - h.fatigue) < 0.001f &&
                 g.route == h.route && g.slot == h.slot && g.routed == h.routed &&

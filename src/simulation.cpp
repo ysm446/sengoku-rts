@@ -45,6 +45,7 @@ void BattleSimulation::update(float seconds) {
         step(static_cast<float>(fixedStep));
         updateRouts(static_cast<float>(fixedStep));
         updateSmallGroups(static_cast<float>(fixedStep));
+        updateFaceDeployments(static_cast<float>(fixedStep));
         time += fixedStep;
         accumulator = std::max(0.0, accumulator - fixedStep);
     }
@@ -551,6 +552,20 @@ void BattleSimulation::step(float seconds) {
         if (formationsTouch || localContact) { f.moving = false; f.state = FormationState::Engaged; }
         f.strength = std::max(0.0f, f.strength - actualLoss);
         if (actualLoss > 0) f.cohesion = std::max(0.0f, f.cohesion - 1.5f * seconds - actualLoss * 0.08f);
+    }
+}
+void BattleSimulation::updateFaceDeployments(float seconds) {
+    std::array<std::array<ContactBody, 25>, 2> bodies{};
+    for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
+        const auto& g = formations[team].organization.smallGroups[id];
+        bodies[team][id] = {formations[team].groupPosition(id), g.heading, g.strength > 0, g.strength > 0 && !g.routed};
+    }
+    for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
+        auto& g = formations[team].organization.smallGroups[id];
+        if (g.routed || g.strength <= 0 || result != BattleResult::Ongoing) { g.faceDeployment = {}; continue; }
+        const bool returning = g.route == SmallGroupRoute::Returning || g.route == SmallGroupRoute::ReliefReserve || g.route == SmallGroupRoute::ReliefWithdraw;
+        const auto fronts = returning ? ContactFronts{} : measureContactFronts(bodies, team, id);
+        advanceFaceDeployment(g.faceDeployment, allocateContactFronts(fronts, g.strength), g.strength, seconds);
     }
 }
 ContactFronts BattleSimulation::contactFronts(unsigned team, unsigned group) const {

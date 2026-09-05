@@ -64,4 +64,5 @@ private:
     void step(float seconds);
     void updateSmallGroups(float seconds);
     void updateRouts(float seconds);
+    void updateFaceDeployments(float seconds);
 };
