@@ -1,4 +1,5 @@
 #include "scene.h"
+#include <numeric>
 #include "sprite_sheet.h"
 #include <algorithm>
 #include <cmath>
@@ -141,7 +142,7 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
             const unsigned direction = (team == 0 ? 1 : 5) + options.directionOffset;
             add(x, z, scene.generatedSoldiers ? 3.4f : 1.7f, scene.generatedSoldiers ? 3.4f : 2.7f,
                 scene.generatedSoldiers ? 4 + direction % 8 : 0, tint);
-            scene.soldierBindings.push_back({scene.sprites.size() - 1, team, {x, offsetZ}, 0, i % 8});
+            scene.soldierBindings.push_back({scene.sprites.size() - 1, team, {x, offsetZ}, 0, i % 8, i});
         }
         for (int i = 0; i < 6; ++i) {
             add(-14.0f + i * 5.6f, team == 0 ? -33.0f : 33.0f, 2.1f, 5.5f, 1, tint);
@@ -193,10 +194,17 @@ std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& c
 }
 
 void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected) {
+    const unsigned teamCount = scene.soldierCount / 2;
+    if (teamCount == 0) return;
+    unsigned casualtyStride = 137;
+    while (std::gcd(casualtyStride, teamCount) != 1) ++casualtyStride;
     for (const auto& binding : scene.soldierBindings) {
         auto& sprite = scene.sprites[binding.spriteIndex];
         const auto& formation = simulation.formations[binding.formation];
         if (!scene.inspect) {
+            const unsigned survivors = static_cast<unsigned>(std::ceil((scene.soldierCount / 2) * formation.strength / 500));
+            sprite.size = (binding.ordinal * casualtyStride) % teamCount < survivors ?
+                (scene.generatedSoldiers ? DirectX::XMFLOAT2{3.4f, 3.4f} : DirectX::XMFLOAT2{1.7f, 2.7f}) : DirectX::XMFLOAT2{0, 0};
             sprite.tint = binding.formation == 0 ? DirectX::XMFLOAT3{0.85f, 0.34f, 0.25f} : DirectX::XMFLOAT3{0.34f, 0.48f, 0.66f};
             if (static_cast<int>(binding.formation) == selected) {
                 sprite.tint.x = std::min(1.0f, sprite.tint.x + 0.2f);
@@ -204,6 +212,15 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
             }
             sprite.position.x = formation.x + binding.offset.x;
             sprite.position.z = formation.z + binding.offset.y;
+            const float disorder = (1 - formation.cohesion / 100) * 0.6f;
+            sprite.position.x += std::sin(static_cast<float>(binding.ordinal) * 2.4f) * disorder;
+            sprite.position.z += std::cos(static_cast<float>(binding.ordinal) * 1.7f) * disorder;
+            if (formation.state == FormationState::Engaged) {
+                // Attack素材ができるまでの簡易な接触表現。
+                const float thrust = std::sin(static_cast<float>(std::fmod(simulation.time * 12, 6.2831853)) + binding.phase) * 0.15f;
+                sprite.position.x += std::cos(formation.heading) * thrust;
+                sprite.position.z += std::sin(formation.heading) * thrust;
+            }
             sprite.position.y = terrainHeight(sprite.position.x, sprite.position.z) + 0.03f;
         }
         const float heading = (scene.inspect ? binding.heading : formation.heading) + scene.headingOffset;

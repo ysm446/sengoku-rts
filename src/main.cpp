@@ -12,6 +12,20 @@ namespace {
 constexpr unsigned initialWidth = 1920;
 constexpr unsigned initialHeight = 1080;
 
+std::wstring battleStatus(const BattleSimulation& simulation) {
+    const wchar_t* result = simulation.result == BattleResult::RedVictory ? L"赤勝利" :
+        simulation.result == BattleResult::BlueVictory ? L"青勝利" : simulation.result == BattleResult::Draw ? L"双方敗走" : L"決着前";
+    std::wstring text = std::wstring(simulation.running ? L"進行中 " : L"一時停止 ") + result;
+    for (unsigned i = 0; i < simulation.formations.size(); ++i) {
+        const auto& f = simulation.formations[i];
+        const wchar_t* state = f.state == FormationState::Engaged ? L"交戦" : f.state == FormationState::Retreating ? L"撤退中" :
+            f.state == FormationState::Routed ? L"敗走済" : f.state == FormationState::Marching ? L"進軍" : L"待機";
+        text += std::wstring(i == 0 ? L" | 赤 " : L" | 青 ") + state + L" 兵力" + std::to_wstring(static_cast<int>(std::ceil(f.strength))) +
+            L" 士気" + std::to_wstring(static_cast<int>(f.morale)) + L" 隊列" + std::to_wstring(static_cast<int>(f.cohesion));
+    }
+    return text;
+}
+
 struct WindowState {
     Camera camera;
     unsigned width = initialWidth, height = initialHeight;
@@ -136,7 +150,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 
 struct Options {
     bool smoke = false, warp = false, inspect = false, placeholder = false;
-    bool march = false, motionTest = false;
+    bool march = false, motionTest = false, combatTest = false;
     float yawDegrees = 0;
     unsigned soldiers = 1000;
     std::filesystem::path capture;
@@ -155,6 +169,7 @@ Options parseOptions() {
             else if (arg == L"--placeholder") options.placeholder = true;
             else if (arg == L"--march") options.march = true;
             else if (arg == L"--motion-test") { options.motionTest = true; options.smoke = true; options.march = true; }
+            else if (arg == L"--combat-test") { options.combatTest = true; options.smoke = true; options.march = true; }
             else if (arg == L"--yaw" && i + 1 < count) {
                 const std::wstring value = args[++i]; std::size_t consumed = 0;
                 options.yawDegrees = std::stof(value, &consumed);
@@ -171,6 +186,7 @@ Options parseOptions() {
         }
     } catch (...) { LocalFree(args); throw; }
     LocalFree(args);
+    if (options.combatTest && (options.inspect || options.motionTest)) throw std::runtime_error("Combat test requires battlefield mode");
     if (options.smoke && options.capture.empty()) options.capture = L"smoke.bmp";
     return options;
 }
@@ -265,7 +281,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         auto previous = std::chrono::steady_clock::now();
         double titleSeconds = 0; unsigned titleFrames = 0, frame = 0;
         bool running = true;
-        const unsigned smokeFrames = options.motionTest ? 16 : 5;
+        const unsigned smokeFrames = options.combatTest ? 80 : options.motionTest ? 16 : 5;
+        bool observedCombat = false, observedRetreat = false;
         while (running) {
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -338,23 +355,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                     state.camera.rotate(targetYaw - state.camera.yaw);
                 }
             }
-            const float simulationDt = options.smoke ? 0.125f : dt;
+            const float simulationDt = options.combatTest ? 1.0f : options.smoke ? 0.125f : dt;
             if (state.inspect) {
                 if (state.inspectPlaying) state.inspectTime += simulationDt;
             } else state.simulation.update(simulationDt);
+            observedCombat |= state.simulation.formations[0].state == FormationState::Engaged;
+            observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
             auto visualSimulation = state.simulation;
             if (state.inspect) visualSimulation.time = state.inspectTime;
             updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected);
             renderer.updateSprites(activeScene.sprites);
             renderer.resize(state.width, state.height);
             const bool captureNow = !options.capture.empty() && (options.smoke ? frame == smokeFrames - 1 : frame == 0);
-            renderer.render(state.camera, captureNow ? options.capture : std::filesystem::path{});
+            const auto capturePath = options.combatTest && frame == 19 ?
+                std::filesystem::path(options.capture.wstring() + L".engaged.bmp") : captureNow ? options.capture : std::filesystem::path{};
+            renderer.render(state.camera, capturePath);
             if (options.smoke) renderer.checkDebugMessages();
             titleSeconds += elapsed; ++titleFrames; ++frame;
             if (titleSeconds >= 0.5 || frame == 1) {
                 const int fps = titleSeconds > 0 ? static_cast<int>(titleFrames / titleSeconds) : 0;
-                const auto title = std::wstring(L"戦国合戦 | ") + (generatedSoldiers ? L"Blender槍足軽" : L"仮素材") +
-                    (state.inspect ? L" 素材確認 | " : L" 戦場 | ") + std::to_wstring(displayedSoldiers) + L" soldiers | " +
+                const auto title = std::wstring(L"戦国合戦 | ") + (state.inspect ? L"素材確認" : battleStatus(state.simulation)) + L" | " +
+                    (generatedSoldiers ? L"Blender槍足軽" : L"仮素材") +
+                    (state.inspect ? L" 素材確認 | " : L" 戦場 | ") + L"表示上限 " + std::to_wstring(displayedSoldiers) + L" | " +
                     std::to_wstring(fps) + L" fps | " + (state.inspect ? L"素材確認" :
                         (state.selected == 0 ? L"赤部隊を選択" : state.selected == 1 ? L"青部隊を選択" : L"選択なし")) +
                     L" | 左:選択 右:移動 H:停止 Space:進軍/一時停止 Q/E・中ドラッグ:回転 Home:リセット F2:素材";
@@ -363,12 +385,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (options.smoke && frame >= smokeFrames) break;
         }
         if (options.smoke) {
+            if (options.combatTest && (!observedCombat || !observedRetreat || state.simulation.result != BattleResult::RedVictory ||
+                state.simulation.formations[1].state != FormationState::Routed))
+                throw std::runtime_error("Combat smoke did not complete engagement and retreat");
             std::ofstream report(std::filesystem::path(options.capture.wstring() + L".txt"));
             report << "PASS: " << frame << " frames; resize; camera pan/zoom/orbit; sprite updates; GPU readback\n"
                    << "Soldiers: " << displayedSoldiers << "\nCapture: " << state.width << 'x' << state.height << '\n'
                    << "Soldier sprites: " << (generatedSoldiers ? "Blender 8-direction PNG" : "placeholder") << '\n'
                    << "Walk atlas: " << (activeScene.animatedSoldiers ? "loaded" : "unavailable") << '\n'
                    << "Formation Z: " << state.simulation.formations[0].z << ", " << state.simulation.formations[1].z << '\n'
+                   << "Combat/retreat observed: " << observedCombat << '/' << observedRetreat << '\n'
                    << "D3D12 debug layer: " << (renderer.debugEnabled() ? "enabled, no warnings/errors" : "unavailable") << '\n';
             if (!report) throw std::runtime_error("Cannot write smoke report");
         }

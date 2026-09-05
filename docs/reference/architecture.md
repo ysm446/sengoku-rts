@@ -1,7 +1,7 @@
 # 設計概要
 
 作成日時: 2026-09-05 09:53
-更新日時: 2026-09-05 10:53
+更新日時: 2026-09-05 11:29
 
 [技術仕様 Draft 0.1](../戦国合戦シミュレーター%20技術仕様%20Draft%200.1.md)の要約。以下は主に設計上の構成を示す。現在の実装範囲は[開発手順](development.md)と[進捗](../plan/progress.md)を参照する。
 
@@ -31,7 +31,7 @@ Formationの状態をSoldier Spriteの配置・向き・アニメーションに
 
 ## 戦闘
 
-接敵 → 戦闘 → 損害 → Cohesion低下 → Morale低下 → Retreat / Fleeを基本の流れとする。Strength、Fatigue、Attack、Defense、Movement Speed、Terrain Bonusなども初期の検討対象。具体的な計算式や閾値は未定。
+接敵 → 戦闘 → 損害 → Cohesion低下 → Morale低下 → Retreat / Fleeを基本の流れとする。Strength、Fatigue、Attack、Defense、Movement Speed、Terrain Bonusなども初期の検討対象。現在は1/60秒の固定更新と2部隊の接触戦闘・損害・士気低下・自動撤退・勝敗を実装した。[戦闘の仮ルール](combat_prototype.md)に計算式・閾値・制限を記録する。Fatigueや地形補正は未実装。
 
 ## 素材生成
 

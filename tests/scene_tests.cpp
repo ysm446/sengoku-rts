@@ -107,6 +107,7 @@ int wmain(int argc, wchar_t** argv) {
         require(std::isfinite(camera.yaw) && std::abs(camera.yaw) <= DirectX::XM_PI, "Yaw wrap failed");
 
         BattleSimulation simulation;
+        simulation.move(0, 0, -15); simulation.move(1, 0, 15);
         simulation.update(1);
         require(simulation.time == 0 && simulation.formations[0].z == -22, "Paused simulation moved");
         simulation.toggle(); simulation.update(1);
@@ -117,7 +118,7 @@ int wmain(int argc, wchar_t** argv) {
         simulation.update(1);
         require(simulation.time == pausedTime, "Paused animation clock advanced");
         simulation.toggle(); simulation.update(100);
-        require(simulation.formations[0].z == -14 && simulation.formations[1].z == 14 &&
+        require(simulation.formations[0].z == -15 && simulation.formations[1].z == 15 &&
                 !simulation.formations[0].moving && !simulation.formations[1].moving, "Formation overshot or failed to stop");
         simulation.reset();
         require(!simulation.running && simulation.time == 0 && simulation.formations[0].z == -22, "Formation reset failed");
@@ -134,6 +135,7 @@ int wmain(int argc, wchar_t** argv) {
 
         SceneOptions walkingOptions;
         BattleSimulation commanded;
+        commanded.hold(1);
         commanded.move(0, 12, -8);
         commanded.update(1);
         require(commanded.formations[0].x == 0, "Move command bypassed pause");
@@ -189,6 +191,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         require(poses.size() == 8, "Walk does not contain eight distinct poses");
         camera = Camera{};
+        simulation.move(0, 0, -15); simulation.move(1, 0, 15);
         simulation.toggle(); simulation.update(0.125f);
         updateSceneSprites(movingScene, simulation, camera);
         const auto beforeOrbit = movingScene.sprites[0];
@@ -205,6 +208,24 @@ int wmain(int argc, wchar_t** argv) {
             require(std::abs(sprite.position.y - terrainHeight(sprite.position.x, sprite.position.z) - 0.03f) < 0.0001f,
                     "Moving soldier lost ground contact");
             require(binding.formation == 0 ? sprite.position.z < -1 : sprite.position.z > 1, "Demo formations overlap at destination");
+        }
+        for (unsigned count : {1000u, 5000u, 10000u}) {
+            auto casualtyScene = makeScene(count);
+            BattleSimulation losses;
+            losses.formations[0].strength = 250;
+            losses.formations[0].cohesion = 30;
+            updateSceneSprites(casualtyScene, losses, Camera{});
+            unsigned visible = 0;
+            for (const auto& binding : casualtyScene.soldierBindings) {
+                const auto& sprite = casualtyScene.sprites[binding.spriteIndex];
+                if (sprite.size.x > 0) ++visible;
+                require(std::isfinite(sprite.position.x) && std::abs(sprite.position.y -
+                    terrainHeight(sprite.position.x, sprite.position.z) - 0.03f) < 0.0001f, "Disordered soldier lost ground contact");
+            }
+            require(visible == count * 3 / 4, "Casualties did not scale with display count");
+            losses.reset(); updateSceneSprites(casualtyScene, losses, Camera{});
+            for (const auto& binding : casualtyScene.soldierBindings)
+                require(casualtyScene.sprites[binding.spriteIndex].size.x > 0, "Reset did not restore casualty sprites");
         }
         std::cout << "Scene and camera checks passed\n";
         return 0;

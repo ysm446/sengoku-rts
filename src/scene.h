@@ -42,6 +42,7 @@ struct Scene {
         DirectX::XMFLOAT2 offset;
         float heading;
         unsigned phase;
+        unsigned ordinal = 0;
     };
     std::vector<SoldierBinding> soldierBindings;
 };
