@@ -91,16 +91,20 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
         const float follow = static_cast<float>(1 - std::exp(-(4 + variation * 5) * dt));
         const auto movement = movementProfile(formation.unit);
         const float maxSpeed = formation.speed * (group.routed || formation.defeated() ? 2.0f : 1.5f);
-        const float wanted = std::min(maxSpeed, distance * follow / static_cast<float>(dt));
+        const float forwardX = std::cos(soldier.heading), forwardZ = std::sin(soldier.heading);
+        const float alignment = distance > 0.003f ? std::clamp((dx * forwardX + dz * forwardZ) / distance, 0.0f, 1.0f) : 0;
+        const float wanted = std::min(maxSpeed, distance * follow / static_cast<float>(dt)) * alignment;
         const float acceleration = movement.acceleration * (0.85f + variation * 0.3f);
         soldier.followSpeed += std::clamp(wanted - soldier.followSpeed,
             -acceleration * 2 * static_cast<float>(dt), acceleration * static_cast<float>(dt));
-        const float travel = std::min(distance, soldier.followSpeed * static_cast<float>(dt));
-        if (distance > 0) { soldier.position.x += dx / distance * travel; soldier.position.z += dz / distance * travel; }
-        const float remaining = distance - travel;
-        soldier.walking = remaining > 0.003f || (formation.moving && distance > 0.001f);
-        if (remaining <= 0.003f) { soldier.position.x = targetX; soldier.position.z = targetZ; soldier.followSpeed = 0; }
-        if (soldier.walking && distance > 0.001f) desiredHeadings[i] = std::atan2(dz, dx);
+        // 更新開始時の正面へだけ進む。目的地が背後ならその場で旋回し、横滑りを防ぐ。
+        // 正面への投影距離を超えて進まず、旋回中に持ち場から遠ざかることも防ぐ。
+        const float travel = std::min(distance * alignment, soldier.followSpeed * static_cast<float>(dt));
+        soldier.position.x += forwardX * travel; soldier.position.z += forwardZ * travel;
+        const float remaining = std::hypot(targetX - soldier.position.x, targetZ - soldier.position.z);
+        soldier.walking = travel > 0.00001f;
+        if (remaining <= 0.003f) { soldier.position.x = targetX; soldier.position.z = targetZ; soldier.followSpeed = 0; soldier.walking = false; }
+        if (remaining > 0.003f) desiredHeadings[i] = std::atan2(dz, dx);
         else if (!group.routed) desiredHeadings[i] = group.heading;
         soldier.position.y = terrainHeight(soldier.position.x, soldier.position.z) + 0.03f;
     }

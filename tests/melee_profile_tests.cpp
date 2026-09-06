@@ -64,11 +64,22 @@ int main(){
             SoldierVisuals followers;followers.update(following);
             const auto start=followers.soldiers[0].position;
             following.formations[0].x+=10;
+            followers.soldiers[0].heading=3.141592654f;
             constexpr double dt=1.0/60;
             for(unsigned frame=0;frame<600;++frame){
                 const auto before=followers.soldiers[0];
                 following.time+=dt;followers.update(following);
                 const auto& after=followers.soldiers[0];
+                const float movedX=after.position.x-before.position.x,movedZ=after.position.z-before.position.z;
+                if(frame==0)require(std::hypot(movedX,movedZ)<.00001f && !after.walking,
+                    "Follower walked before turning toward a rear destination");
+                require(std::hypot(start.x+10-after.position.x,start.z-after.position.z)
+                    <=std::hypot(start.x+10-before.position.x,start.z-before.position.z)+.0001f,
+                    "Follower overshot its slot during a turn");
+                require(std::abs(-std::sin(before.heading)*movedX+std::cos(before.heading)*movedZ)<=.0031f,
+                    "Follower slid sideways while turning");
+                require(std::cos(before.heading)*movedX+std::sin(before.heading)*movedZ>=-.0031f,
+                    "Follower moved backward while turning");
                 require(std::abs(std::remainder(after.heading-before.heading,6.283185307f))
                     <=movementProfile(type).turnRate*dt+.0001f,"Follower turned instantly");
                 require(std::hypot(after.position.x-before.position.x,after.position.z-before.position.z)

@@ -443,7 +443,8 @@ int wmain(int argc, wchar_t** argv) {
         updateSceneSprites(markedScene, expiredRout, camera, 0, 22);
         require(markerCount() == 0, "Finished battle kept its range markers");
         for (unsigned id : {2u, 7u, 12u, 17u}) localRout.formations[0].organization.smallGroups[id].offsetX = 100;
-        localRout.update(0.1f); routVisuals.update(localRout);
+        // 退路が背後にあるため、有限速度で向き直る時間も進める。
+        for (unsigned step = 0; step < 25; ++step) { localRout.update(0.1f); routVisuals.update(localRout); }
         for (unsigned id = 0; id < SoldierVisuals::perTeam; ++id) {
             const auto& soldier = routVisuals.soldiers[id];
             if (soldier.smallGroup == 22 && soldier.walking) ++runners;
@@ -523,7 +524,10 @@ int wmain(int argc, wchar_t** argv) {
         require(flanker.life == SoldierLife::Alive && flanker.walking,
             "Moving flank soldier did not remain alive and walking");
         flanking.move(0, 0, -55); flanking.hold(1);
-        flanking.update(20); flankingVisuals.update(flanking);
+        // 追従と旋回も継続更新し、20秒後の整列を検証する。
+        for (unsigned step = 0; step < 600; ++step) {
+            flanking.update(1.0f / 30); flankingVisuals.update(flanking);
+        }
         const auto& restored = flankingVisuals.soldiers[flankSoldier];
         require(restored.life == SoldierLife::Alive && !restored.attacking &&
             std::abs(restored.position.x - flanking.formations[0].x - base.x) < 0.6f,
