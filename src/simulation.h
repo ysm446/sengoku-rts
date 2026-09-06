@@ -5,6 +5,8 @@
 #include "combat_geometry.h"
 #include "contact_fronts.h"
 #include "melee_profile.h"
+#include "ranged_profile.h"
+#include <vector>
 
 enum class FormationState { Idle, Marching, Engaged, Retreating, Routed };
 enum class BattleResult { Ongoing, RedVictory, BlueVictory, Draw };
@@ -51,6 +53,8 @@ public:
     void update(float seconds);
     void reset(UnitType unit = UnitType::Spearman, bool mixed = false);
     bool mixed = false;
+    std::vector<ArrowVolley> arrows;
+    std::uint64_t volleysFired = 0, volleysHit = 0;
     void move(unsigned index, float x, float z);
     void hold(unsigned index);
     unsigned nearbyRouts(unsigned team, unsigned group) const;
@@ -69,4 +73,6 @@ private:
     void updateSmallGroups(float seconds);
     void updateRouts(float seconds);
     void updateFaceDeployments(float seconds);
+    void updateArrows(float seconds, std::array<std::array<float, 25>, 2>& damage, const std::array<bool, 2>& moved);
+    bool clearShot(const ArrowVolley& arrow) const;
 };

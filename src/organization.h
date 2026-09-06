@@ -24,6 +24,10 @@ struct SmallGroup {
     float activeFighters = 0;
     std::array<float, 25> activeOpponents{};
     std::optional<UnitType> unit;
+    float shotCooldown = 0;
+    double lastShot = -10;
+    float rangedLoss = 0;
+    BattlePoint lastRangedImpact{};
     int attackTarget = -1;
     bool canAttack = false;
     CombatWait combatWait = CombatWait::NoTarget;

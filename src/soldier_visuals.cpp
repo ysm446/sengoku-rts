@@ -72,6 +72,7 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
     if (generation != simulation.generation || soldiers.empty() || simulation.time < time) {
         generation = simulation.generation; time = simulation.time;
         impacts = {}; impactPositions = {};
+        rangedDeaths = {};
         soldiers.assign(perTeam * 2, {});
         for (unsigned i = 0; i < soldiers.size(); ++i) {
             auto& soldier = soldiers[i];
@@ -184,8 +185,31 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
         for (unsigned team = 0; team < 2; ++team) {
             const auto& formation = simulation.formations[team];
             const auto& enemy = simulation.formations[1 - team];
+            for (unsigned group = 0; group < 25; ++group) {
+                const auto& archer = formation.organization.smallGroups[group];
+                const double shotAge = simulation.time - archer.lastShot;
+                if (formation.groupUnit(group) != UnitType::Archer || archer.routed || formation.moving ||
+                    shotAge < 0 || shotAge >= 1 || archer.attackTarget < 0) continue;
+                const auto target = enemy.groupPosition(archer.attackTarget);
+                unsigned remaining = static_cast<unsigned>(std::ceil(members[team][group].size() *
+                    std::min(BowProfile::maxShooters, archer.strength) / std::max(.001f, archer.strength)));
+                for (unsigned id : members[team][group]) {
+                    if (remaining == 0) break;
+                    auto& soldier = soldiers[id];
+                    desiredHeadings[id] = std::atan2(target.z - soldier.position.z, target.x - soldier.position.x);
+                    const float turned = turnToward(soldier.heading, desiredHeadings[id], movementProfile(UnitType::Archer).turnRate * static_cast<float>(dt));
+                    if (std::abs(std::remainder(desiredHeadings[id] - turned, 6.283185307f)) > .35f) continue;
+                    --remaining;
+                    soldier.attacking = true; soldier.walking = false;
+                    soldier.animationTime = shotAge;
+                    const auto& targets = members[1 - team][archer.attackTarget];
+                    if (!targets.empty()) soldier.attackTarget = static_cast<int>(targets.front());
+                    else soldier.attacking = false;
+                }
+            }
             if (formation.state != FormationState::Engaged || enemy.state != FormationState::Engaged) continue;
             for (unsigned group = 0; group < 25; ++group) {
+                if (formation.groupUnit(group) == UnitType::Archer) continue;
                 const auto& unit = formation.organization.smallGroups[group];
                 if (unit.routed || unit.route == SmallGroupRoute::Returning || unit.route == SmallGroupRoute::ReliefReserve ||
                     unit.route == SmallGroupRoute::ReliefWithdraw || (unit.attackTarget >= 0 && !unit.canAttack)) continue;
@@ -271,6 +295,26 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
             const unsigned team = id / perTeam;
             auto& budget = casualtyBudget[team][soldiers[id].smallGroup];
             if (budget > 0) { casualties[team].push_back(id); --budget; }
+        }
+        // 遠隔損害は近接の命中を待たず、着弾した小組の狙点に近い生存兵へ反映する。
+        for (unsigned team = 0; team < 2; ++team) for (unsigned group = 0; group < 25; ++group) {
+            const auto& state = simulation.formations[team].organization.smallGroups[group];
+            if (state.rangedLoss <= 0) continue;
+            unsigned count = 0;
+            for (unsigned id = team * perTeam; id < (team + 1) * perTeam; ++id) count += soldiers[id].smallGroup == group;
+            const unsigned desired = state.nominalStrength ? static_cast<unsigned>(count * state.rangedLoss / state.nominalStrength) : 0;
+            if (desired <= rangedDeaths[team][group] || casualtyBudget[team][group] == 0) continue;
+            auto candidates = members[team][group];
+            std::sort(candidates.begin(), candidates.end(), [&](unsigned a, unsigned b) {
+                const auto distance = [&](unsigned id) { return std::hypot(soldiers[id].position.x - state.lastRangedImpact.x,
+                    soldiers[id].position.z - state.lastRangedImpact.z); };
+                return distance(a) < distance(b);
+            });
+            for (unsigned id : candidates) {
+                if (rangedDeaths[team][group] >= desired || casualtyBudget[team][group] == 0) break;
+                if (std::find(casualties[team].begin(), casualties[team].end(), id) != casualties[team].end()) continue;
+                casualties[team].push_back(id); ++rangedDeaths[team][group]; --casualtyBudget[team][group];
+            }
         }
         for (unsigned id = 0; id < soldiers.size(); ++id) {
             auto& soldier = soldiers[id];

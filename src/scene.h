@@ -3,6 +3,7 @@
 #include "simulation.h"
 #include "unit_type.h"
 #include "formation_drill.h"
+#include "terrain.h"
 #include <DirectXMath.h>
 #include <cstdint>
 #include <filesystem>
@@ -49,6 +50,7 @@ struct SoldierVisuals {
     double time = 0;
     std::array<std::uint64_t, 2> impacts{};
     std::array<DirectX::XMFLOAT3, 2> impactPositions{};
+    std::array<std::array<unsigned, 25>, 2> rangedDeaths{};
     void update(const BattleSimulation& simulation);
     void separateOverlaps(float seconds = 1.0f / 60);
     static constexpr float minimumSpacing = 0.22f; // 固定密度の表示兵士用。実兵の体格ではない。
@@ -65,13 +67,15 @@ struct Scene {
     static constexpr unsigned attackFrames = 8;
     static constexpr unsigned attackRow = 1 + walkFrames;
     static constexpr unsigned unitTileCount = atlasColumns * (1 + walkFrames + attackFrames);
-    static constexpr unsigned tileCount = unitTileCount * 2;
+    static constexpr unsigned tileCount = unitTileCount * 3;
     static constexpr unsigned atlasWidth = tileWidth * atlasColumns;
-    static constexpr unsigned atlasHeight = tileHeight * (1 + walkFrames + attackFrames) * 2;
+    static constexpr unsigned atlasHeight = tileHeight * (1 + walkFrames + attackFrames) * 3;
     std::vector<TerrainVertex> terrain;
     std::vector<SpriteInstance> sprites;
     std::size_t routMarkerStart = 0;
     static constexpr unsigned routMarkerCount = 96 + 25 * 12;
+    std::size_t arrowStart = 0;
+    static constexpr unsigned arrowCount = 300;
     std::vector<std::uint32_t> atlas;
     unsigned soldierCount = 0;
     bool generatedSoldiers = false;

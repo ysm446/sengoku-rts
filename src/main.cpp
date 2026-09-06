@@ -434,13 +434,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             rebuildScene();
             state.simulation.running = options.march;
             updateSceneSprites(activeScene, state.simulation, state.camera);
-            unsigned spears = 0, swords = 0;
+            unsigned spears = 0, swords = 0, archers = 0;
             for (const auto& binding : activeScene.soldierBindings) {
                 const auto tile = activeScene.sprites[binding.spriteIndex].tile;
-                if (tile >= Scene::unitTileCount) ++swords; else ++spears;
+                if (tile >= Scene::unitTileCount * 2) ++archers;
+                else if (tile >= Scene::unitTileCount) ++swords; else ++spears;
             }
             if (!state.simulation.mixed || !activeScene.mixed || state.inspect || state.drillEnabled ||
-                (activeScene.generatedSoldiers && (!spears || !swords)))
+                (activeScene.generatedSoldiers && (!spears || !swords || !archers)))
                 throw std::runtime_error("Mixed battle input, reset or sprite banks failed");
         }
         if(options.smoke && options.swordBattle){
@@ -471,9 +472,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 const int py = static_cast<int>((1 - DirectX::XMVectorGetY(projected)) * state.height * 0.5f);
                 SendMessageW(window, message, 0, MAKELPARAM(px, py));
             };
+            const auto initialTarget = state.simulation.formations[0].targetX;
             clickWorld(WM_RBUTTONDOWN, 10, -10);
-            if (state.simulation.formations[0].targetX != 0) throw std::runtime_error("Unselected move accepted");
-            clickWorld(WM_LBUTTONDOWN, 0, -22);
+            if (state.simulation.formations[0].targetX != initialTarget) throw std::runtime_error("Unselected move accepted");
+            clickWorld(WM_LBUTTONDOWN, state.simulation.formations[0].x, state.simulation.formations[0].z);
             if (state.selected != 0) throw std::runtime_error("Formation selection failed");
             clickWorld(WM_RBUTTONDOWN, 10, -10);
             if (std::abs(state.simulation.formations[0].targetX - 10) > 0.2f ||
@@ -481,12 +483,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 throw std::runtime_error("Mouse move command failed");
             SendMessageW(window, WM_KEYDOWN, 'H', 0);
             if (state.simulation.formations[0].targetZ != -22) throw std::runtime_error("Hold input failed");
-            clickWorld(WM_LBUTTONDOWN, 0, 22);
+            clickWorld(WM_LBUTTONDOWN, state.simulation.formations[1].x, state.simulation.formations[1].z);
             if (state.selected != 1) throw std::runtime_error("Second formation selection failed");
             clickWorld(WM_LBUTTONDOWN, 0, 0);
             if (state.selected != -1) throw std::runtime_error("Empty terrain did not clear selection");
             state.simulation.formations[0].organization.smallGroups[15].offsetX = -6.1f;
-            clickWorld(WM_LBUTTONDOWN, -16.5f, -16.8f);
+            const auto flank = state.simulation.formations[0].groupPosition(15);
+            clickWorld(WM_LBUTTONDOWN, flank.x, flank.z);
             if (state.selected != 0 || state.selectedGroup != 15 || state.selectionStatus().find(L"小組16") == std::wstring::npos)
                 throw std::runtime_error("Flanking small group selection or hierarchy status failed");
             clickWorld(WM_RBUTTONDOWN, 10, -10);
@@ -521,6 +524,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         const unsigned smokeFrames = options.combatTest || options.formationPreview ? 80 : options.motionTest ? 16 : 5;
         bool observedCombat = false, observedRetreat = false;
         bool observedAttack = false;
+        bool observedArrows = false;
         bool observedFrontRelief = false;
         bool observedLocalRout = false;
         unsigned routCaptureFrame = smokeFrames;
@@ -632,6 +636,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             else audio.update(state.audioSettings.apply(battleSoundMix(*activeScene.individuals, state.simulation, state.camera, true)), dt, impacts);
             if (options.combatTest) for (const auto& soldier : activeScene.individuals->soldiers)
                 observedAttack |= soldier.attacking;
+            if (options.combatTest && options.mixedBattle)
+                for (unsigned i = 0; i < Scene::arrowCount; ++i)
+                    observedArrows |= activeScene.sprites[activeScene.arrowStart + i].tile == 12;
             renderer.updateSprites(activeScene.sprites);
             renderer.resize(state.width, state.height);
             const bool captureNow = !options.capture.empty() && (options.smoke ? frame == smokeFrames - 1 : frame == 0);
@@ -646,7 +653,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 const int fps = titleSeconds > 0 ? static_cast<int>(titleFrames / titleSeconds) : 0;
                 const auto title = std::wstring(L"戦国合戦 | ") + (state.inspect ? L"素材確認" : state.selectionStatus()) + L" | " +
                     (state.inspect ? L"" : battleStatus(state.simulation)) + L" | " +
-                    (state.simulation.mixed && !state.inspect ? L"槍・刀混成" : generatedSoldiers ? unitVisual(activeScene.unit).name : L"仮素材") +
+                    (state.simulation.mixed && !state.inspect ? L"槍・刀・弓混成" : generatedSoldiers ? unitVisual(activeScene.unit).name : L"仮素材") +
                     (state.inspect ? L" 素材確認 | " : L" 戦場 | ") + L"表示上限 " + std::to_wstring(displayedSoldiers) + L" | " +
                     std::to_wstring(fps) + L" fps | " + (state.inspect ? L"素材確認" :
                         (state.selected == 0 ? L"赤部隊を選択" : state.selected == 1 ? L"青部隊を選択" : L"選択なし")) +
@@ -655,7 +662,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                         state.audioSettings.selected == AudioBus::Environment ? L"環境 " : L"効果音 ") +
                     std::to_wstring(state.audioSettings.percent[static_cast<unsigned>(state.audioSettings.selected)]) + L"%]" +
                     (state.audioSaveFailed ? L" 音量保存失敗" : L"") +
-                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 F7:刀戦闘 F8:槍・刀混成 M:消音 F5:音量対象 +/-:調整";
+                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 F7:刀戦闘 F8:槍・刀・弓混成 M:消音 F5:音量対象 +/-:調整";
                 const auto drillTitle=std::wstring(L"隊列確認 | ")+unitVisual(state.unit).name+
                     (state.drill.running?L" 進行中":L" 一時停止")+L" | 4列×6段・24体 | 隊列ずれ "+std::to_wstring(state.drill.error())+
                     L" | 右クリック:移動 Space:再生/停止 H:その場で整列 Home:初期化 F4:兵種 F6:素材へ F7:刀戦闘 | 黄点:持ち場 水色:目的地";
@@ -664,6 +671,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (options.smoke && frame >= smokeFrames) break;
         }
         if (options.smoke) {
+            if (options.combatTest && options.mixedBattle && (!observedArrows || state.simulation.volleysFired == 0 || state.simulation.volleysHit == 0))
+                throw std::runtime_error("Mixed battle arrows: fired=" + std::to_string(state.simulation.volleysFired) +
+                    " hit=" + std::to_string(state.simulation.volleysHit) + " rendered=" + std::to_string(observedArrows));
             // 前列交代の成立条件はsimulation_testsの専用配置で検証する。通常戦闘では敗走が先行しうる。
             if (options.combatTest && (!observedCombat || !observedRetreat || !observedAttack || !observedLocalRout || state.simulation.result != BattleResult::RedVictory ||
                 !state.simulation.formations[1].defeated()))
@@ -680,6 +690,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                    << "Formation Z: " << state.simulation.formations[0].z << ", " << state.simulation.formations[1].z << '\n'
                    << "Combat/retreat observed: " << observedCombat << '/' << observedRetreat << '\n'
                    << "Individual attack observed: " << observedAttack << '\n'
+                   << "Arrow volleys fired: " << state.simulation.volleysFired << '\n'
+                   << "Arrow volleys hit: " << state.simulation.volleysHit << '\n'
+                   << "Arrows rendered: " << observedArrows << '\n'
                    << "D3D12 debug layer: " << (renderer.debugEnabled() ? "enabled, no warnings/errors" : "unavailable") << '\n';
             if (!report) throw std::runtime_error("Cannot write smoke report");
         }

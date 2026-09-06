@@ -71,11 +71,6 @@ void makeAtlas(Scene& scene) {
 }
 }
 
-float terrainHeight(float x, float z) {
-    return 1.2f * std::sin(x * 0.055f) * std::cos(z * 0.07f) +
-        3.6f * std::exp(-((x + 37) * (x + 37) + (z - 25) * (z - 25)) / 330.0f);
-}
-
 Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     if (soldiers == 0 || soldiers > 10000 || soldiers % 2 != 0)
         throw std::invalid_argument("Soldier count must be even and between 2 and 10000.");
@@ -110,14 +105,17 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     }
     if (options.mixed && scene.generatedSoldiers) {
         const auto directory = options.soldierSheet.parent_path();
-        const wchar_t* names[] = {L"samurai_idle.png", L"samurai_walk.png", L"samurai_attack.png"};
-        const unsigned rows[] = {0, 1, Scene::attackRow};
-        const unsigned frames[] = {1, Scene::walkFrames, Scene::attackFrames};
-        for (unsigned animation = 0; animation < 3; ++animation) {
-            const auto pixels = loadSpriteSheet(directory / names[animation], Scene::tileWidth * 8, Scene::tileHeight * frames[animation]);
-            for (unsigned y = 0; y < Scene::tileHeight * frames[animation]; ++y)
-                std::copy_n(pixels.data() + y * Scene::tileWidth * 8, Scene::tileWidth * 8,
-                    scene.atlas.data() + (Scene::atlasHeight / 2 + rows[animation] * Scene::tileHeight + y) * Scene::atlasWidth + 4 * Scene::tileWidth);
+        for (unsigned bank = 1; bank < 3; ++bank) {
+            const std::wstring prefix = bank == 1 ? L"samurai" : L"archer";
+            const wchar_t* suffixes[] = {L"_idle.png", L"_walk.png", L"_attack.png"};
+            const unsigned rows[] = {0, 1, Scene::attackRow};
+            const unsigned frames[] = {1, Scene::walkFrames, Scene::attackFrames};
+            for (unsigned animation = 0; animation < 3; ++animation) {
+                const auto pixels = loadSpriteSheet(directory / (prefix + suffixes[animation]), Scene::tileWidth * 8, Scene::tileHeight * frames[animation]);
+                for (unsigned y = 0; y < Scene::tileHeight * frames[animation]; ++y)
+                    std::copy_n(pixels.data() + y * Scene::tileWidth * 8, Scene::tileWidth * 8,
+                        scene.atlas.data() + (bank * Scene::atlasHeight / 3 + rows[animation] * Scene::tileHeight + y) * Scene::atlasWidth + 4 * Scene::tileWidth);
+            }
         }
     }
     constexpr int cells = 100;
@@ -189,6 +187,8 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     }
     scene.routMarkerStart = scene.sprites.size();
     for (unsigned i = 0; i < Scene::routMarkerCount; ++i) add(0, 0, 0.5f, 0.5f, 13, white);
+    scene.arrowStart = scene.sprites.size();
+    for (unsigned i = 0; i < Scene::arrowCount; ++i) add(0, 0, 1, .14f, 13, white);
     return scene;
 }
 
@@ -277,7 +277,7 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
     for (const auto& binding : scene.soldierBindings) {
         auto& sprite = scene.sprites[binding.spriteIndex];
         const auto renderedUnit = scene.inspect ? scene.unit : simulation.formations[binding.formation].groupUnit(Organization::groupForSoldier(binding.ordinal));
-        const unsigned tileOffset = scene.mixed && renderedUnit == UnitType::Samurai ? Scene::unitTileCount : 0;
+        const unsigned tileOffset = scene.mixed ? static_cast<unsigned>(renderedUnit) * Scene::unitTileCount : 0;
         float heading = binding.heading + scene.headingOffset;
         double animationTime = simulation.time;
         bool walking = simulation.time > 0;
@@ -343,5 +343,25 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
         } else if (scene.animatedSoldiers && walking)
             frame = 1 + (static_cast<unsigned>(std::fmod(animationTime * 8.0, 8.0)) + binding.phase) % Scene::walkFrames;
         sprite.tile = scene.generatedSoldiers ? tileOffset + 4 + camera.spriteDirection(heading) + frame * Scene::atlasColumns : 0;
+    }
+    if (!scene.inspect) {
+        for (unsigned i = 0; i < Scene::arrowCount; ++i) scene.sprites[scene.arrowStart + i].tile = 13;
+        unsigned marker = 0;
+        for (const auto& arrow : simulation.arrows) {
+            const float fraction = arrow.age / arrow.duration;
+            const auto p = arrow.position(fraction), next = arrow.position(std::min(1.0f, fraction + .01f));
+            const float dx = next.x - p.x, dy = arrow.height(std::min(1.0f, fraction + .01f)) - arrow.height(fraction), dz = next.z - p.z;
+            const float length = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (length <= 0) continue;
+            // 一斉射の代表として三本を表示する。表示本数から損害は計算しない。
+            for (unsigned shaft = 0; shaft < 3 && marker < Scene::arrowCount; ++shaft) {
+                auto& sprite = scene.sprites[scene.arrowStart + marker++];
+                const float spread = (static_cast<float>(shaft) - 1) * .45f;
+                sprite.position = {p.x - dz / length * spread, arrow.height(fraction), p.z + dx / length * spread};
+                sprite.tile = 12; sprite.size = {1.4f, .16f}; sprite.pivot = .5f;
+                sprite.rightAxis = {dx / length, dy / length, dz / length}; sprite.upAxis = camera.up();
+                sprite.tint = arrow.team == 0 ? DirectX::XMFLOAT3{1, .75f, .35f} : DirectX::XMFLOAT3{.65f, .85f, 1};
+            }
+        }
     }
 }

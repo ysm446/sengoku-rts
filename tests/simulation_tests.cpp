@@ -89,7 +89,9 @@ int main() {
         for (const auto& formation : mixed.formations) {
             unsigned swords = 0;
             for (unsigned id = 0; id < 25; ++id) swords += formation.groupUnit(id) == UnitType::Samurai;
-            require(swords == 10 && formation.strength == 500, "Mixed composition lost its units or strength");
+            unsigned archers = 0;
+            for (unsigned id = 0; id < 25; ++id) archers += formation.groupUnit(id) == UnitType::Archer;
+            require(swords == 8 && archers == 5 && formation.strength == 500, "Mixed composition lost its units or strength");
         }
         auto mixedRange = duel({7, 0});
         mixedRange.formations[0].organization.smallGroups[12].unit = UnitType::Samurai;

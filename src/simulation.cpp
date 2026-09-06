@@ -30,18 +30,29 @@ void BattleSimulation::hold(unsigned index) {
 void BattleSimulation::reset(UnitType unit, bool mixedBattle) {
     const auto profile = meleeProfile(unit);
     mixed = mixedBattle;
+    arrows.clear(); volleysFired = volleysHit = 0;
     ++generation;
     running = false; time = 0; accumulator = 0; result = BattleResult::Ongoing;
     // 最小デモの配置と移動先。関ヶ原のデータではない。
     formations = {{{0, -22, 0, 0, DirectX::XM_PIDIV2, 1.8f, false},
                    {0, 22, 0, 0, -DirectX::XM_PIDIV2, 1.8f, false}}};
     formations[1].morale = 85; // 退却の差を観察する試作条件。陣営固有の補正ではない。
+    if (mixed) {
+        formations[0].x = formations[0].targetX = -6;
+        formations[1].x = formations[1].targetX = 6;
+    }
     for(auto& f:formations){f.unit=unit;f.speed=profile.moveSpeed;}
     for (auto& f : formations) for (unsigned id = 0; id < 25; ++id) {
         auto& g = f.organization.smallGroups[id];
         g.morale = f.morale; g.heading = f.heading;
-        // 両翼の各一列を刀、中央三列を槍にする。所属は移動・交代後も保つ。
-        if (mixed) g.unit = id % 5 == 0 || id % 5 == 4 ? UnitType::Samurai : UnitType::Spearman;
+        // 赤は槍中央・刀両翼。青は槍前衛・刀予備。兵種は移動・交代後も保つ。
+        if (mixed) {
+            const bool red = &f == &formations[0];
+            const unsigned row = id / 5, column = id % 5;
+            const bool rear = row == (red ? 0u : 4u);
+            const bool sword = red ? column == 0 || column == 4 : row == 3 || (row == 2 && column > 0 && column < 4);
+            g.unit = rear ? UnitType::Archer : sword ? UnitType::Samurai : UnitType::Spearman;
+        }
     }
 }
 void BattleSimulation::update(float seconds) {
@@ -211,7 +222,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             if (contact) for (unsigned other = 0; other < 25; ++other) {
                 if (enemy.organization.smallGroups[other].routed || enemy.organization.smallGroups[other].strength <= 0) continue;
                 const auto q = positions[1 - team][other];
-                if (battleDistance(p, q) <= meleeProfile(formations[team].groupUnit(id)).groupRange) {
+                if (battleDistance(p, q) <= combatProfile(formations[team].groupUnit(id)).groupRange) {
                     g.state = SmallGroupState::Engaged;
                     break;
                 }
@@ -224,8 +235,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 if (seeking) {
                     const auto q = positions[1 - team][g.attackTarget];
                     const float distance = battleDistance(p, q);
-                    target = distance > meleeProfile(formations[team].groupUnit(id)).groupRange ? Point{p.x + (q.x - p.x) / distance * (distance - meleeProfile(formations[team].groupUnit(id)).stopDistance),
-                        p.z + (q.z - p.z) / distance * (distance - meleeProfile(formations[team].groupUnit(id)).stopDistance)} : p;
+                    target = distance > combatProfile(formations[team].groupUnit(id)).groupRange ? Point{p.x + (q.x - p.x) / distance * (distance - combatProfile(formations[team].groupUnit(id)).stopDistance),
+                        p.z + (q.z - p.z) / distance * (distance - combatProfile(formations[team].groupUnit(id)).stopDistance)} : p;
                 }
                 if (!f.maneuverEnabled && !f.defeated()) {
                     if (!g.canAttack && g.combatWait == CombatWait::OutOfRange) g.combatWait = CombatWait::Held;
@@ -245,8 +256,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     const auto enemyPoint = positions[1 - team][g.attackTarget];
                     const auto attackPoint = [&](Point from) {
                         const float length = battleDistance(from, enemyPoint);
-                        return length > meleeProfile(formations[team].groupUnit(id)).stopDistance ? Point{enemyPoint.x - (enemyPoint.x - from.x) * meleeProfile(formations[team].groupUnit(id)).stopDistance / length,
-                            enemyPoint.z - (enemyPoint.z - from.z) * meleeProfile(formations[team].groupUnit(id)).stopDistance / length} : from;
+                        return length > combatProfile(formations[team].groupUnit(id)).stopDistance ? Point{enemyPoint.x - (enemyPoint.x - from.x) * combatProfile(formations[team].groupUnit(id)).stopDistance / length,
+                            enemyPoint.z - (enemyPoint.z - from.z) * combatProfile(formations[team].groupUnit(id)).stopDistance / length} : from;
                     };
                     if (g.detourTarget >= 0 && battleDistance(p, {g.detourX, g.detourZ}) < 0.001f) g.detourTarget = -1;
                     if (g.detourTarget >= 0) {
@@ -490,17 +501,18 @@ void BattleSimulation::step(float seconds) {
         g.canAttack = false;
         g.combatWait = CombatWait::NoTarget;
         if (g.routed || g.strength <= 0) continue;
-        float nearest = 16;
+        const bool ranged = formations[team].groupUnit(id) == UnitType::Archer;
+        float nearest = ranged ? BowProfile::maxRange : 16;
         bool targetBlocked = true;
         for (unsigned other = 0; other < 25; ++other) {
             const auto& enemy = formations[1 - team].organization.smallGroups[other];
             if (enemy.routed || enemy.strength <= 0) continue;
             const float distance = battleDistance(points[team][id], points[1 - team][other]);
-            if (distance >= 16 || distance < 0.001f) continue;
+            if (distance >= (ranged ? BowProfile::maxRange : 16) || distance < (ranged ? BowProfile::minRange : 0.001f)) continue;
             const auto p = points[team][id], q = points[1 - team][other];
-            const bool inRange = distance <= meleeProfile(formations[team].groupUnit(id)).groupRange;
-            const BattlePoint end = inRange ? q : BattlePoint{q.x - (q.x - p.x) * meleeProfile(formations[team].groupUnit(id)).stopDistance / distance,
-                q.z - (q.z - p.z) * meleeProfile(formations[team].groupUnit(id)).stopDistance / distance};
+            const bool inRange = distance <= combatProfile(formations[team].groupUnit(id)).groupRange;
+            const BattlePoint end = inRange ? q : BattlePoint{q.x - (q.x - p.x) * combatProfile(formations[team].groupUnit(id)).stopDistance / distance,
+                q.z - (q.z - p.z) * combatProfile(formations[team].groupUnit(id)).stopDistance / distance};
             const float clearance = inRange ? 2.25f : 4.5f + 3 * std::max(formations[team].speed, formations[1 - team].speed) * seconds;
             bool blocked = false;
             for (unsigned blockerTeam = 0; blockerTeam < 2 && !blocked; ++blockerTeam)
@@ -510,6 +522,7 @@ void BattleSimulation::step(float seconds) {
                         (inRange && formations[blockerTeam].organization.smallGroups[blocker].routed)) continue;
                     if (segmentDistance(p, end, points[blockerTeam][blocker]) < clearance) { blocked = true; break; }
                 }
+            if (ranged) blocked = !clearShot({team, id, other, p, q});
             // 最も近い相手の陰で停止し続けず、攻撃線・接近経路の空いた候補を優先する。
             if (g.attackTarget < 0 || (!blocked && targetBlocked) || (blocked == targetBlocked && distance < nearest)) {
                 nearest = distance; g.attackTarget = static_cast<int>(other); targetBlocked = blocked;
@@ -518,7 +531,7 @@ void BattleSimulation::step(float seconds) {
         const auto p = points[team][id];
         const float targetHeading = g.attackTarget >= 0 ? std::atan2(points[1 - team][g.attackTarget].z - p.z,
             points[1 - team][g.attackTarget].x - p.x) : formations[team].heading;
-        g.heading = turnToward(g.heading, targetHeading, meleeProfile(formations[team].groupUnit(id)).turnRate * seconds);
+        g.heading = turnToward(g.heading, targetHeading, combatProfile(formations[team].groupUnit(id)).turnRate * seconds);
     }
     bool localContact = false;
     std::array<std::array<ContactBody, 25>, 2> contactBodies{};
@@ -529,11 +542,12 @@ void BattleSimulation::step(float seconds) {
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
         const auto& f = formations[team];
         auto& g = formations[team].organization.smallGroups[id];
+        if (f.groupUnit(id) == UnitType::Archer) continue;
         if (g.attackTarget < 0) continue;
         const auto p = points[team][id], q = points[1 - team][g.attackTarget];
         const float distance = battleDistance(p, q);
         g.combatWait = CombatWait::OutOfRange;
-        if (distance > meleeProfile(formations[team].groupUnit(id)).groupRange || distance < 0.001f) continue;
+        if (distance > combatProfile(formations[team].groupUnit(id)).groupRange || distance < 0.001f) continue;
         localContact = true;
         if (g.route == SmallGroupRoute::Returning || g.route == SmallGroupRoute::ReliefReserve ||
             g.route == SmallGroupRoute::ReliefWithdraw) { g.combatWait = CombatWait::Returning; continue; }
@@ -553,7 +567,7 @@ void BattleSimulation::step(float seconds) {
             if (fighters <= 0) continue;
             const auto targetPoint = points[1 - team][target];
             const float targetDistance = battleDistance(p, targetPoint);
-            if (targetDistance < 0.001f || targetDistance > meleeProfile(f.groupUnit(id)).groupRange) continue;
+            if (targetDistance < 0.001f || targetDistance > combatProfile(f.groupUnit(id)).groupRange) continue;
             bool targetBlocked = false;
             for (unsigned blockerTeam = 0; blockerTeam < 2 && !targetBlocked; ++blockerTeam)
                 for (unsigned blocker = 0; blocker < 25; ++blocker) {
@@ -568,12 +582,16 @@ void BattleSimulation::step(float seconds) {
             const auto& victim = formations[1 - team].organization.smallGroups[target];
             const float defense = (std::cos(victim.heading) * (p.x - targetPoint.x) + std::sin(victim.heading) * (p.z - targetPoint.z)) / targetDistance;
             const float directionBonus = defense < -0.5f ? 1.5f : defense < 0.5f ? 1.25f : 1.0f;
-            damage[1 - team][target] += meleeProfile(f.groupUnit(id)).damagePerSecond * (fighters / 5) * (0.5f + f.cohesion / 200) *
+            damage[1 - team][target] += combatProfile(f.groupUnit(id)).damagePerSecond * (fighters / 5) * (0.5f + f.cohesion / 200) *
                 (0.5f + g.morale / 200) * directionBonus * seconds;
         }
         g.canAttack = g.activeFighters > 0;
         g.combatWait = CombatWait::None;
     }
+    std::array<bool, 2> moved{};
+    for (unsigned team = 0; team < 2; ++team)
+        moved[team] = std::hypot(formations[team].x - beforeMove[team].x, formations[team].z - beforeMove[team].z) > .0001f;
+    updateArrows(seconds, damage, moved);
     for (unsigned i = 0; i < formations.size(); ++i) {
         auto& f = formations[i];
         float actualLoss = 0;
@@ -590,6 +608,7 @@ void BattleSimulation::step(float seconds) {
     }
 }
 void BattleSimulation::updateFaceDeployments(float seconds) {
+    if (result != BattleResult::Ongoing) arrows.clear();
     std::array<std::array<ContactBody, 25>, 2> bodies{};
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
         const auto& g = formations[team].organization.smallGroups[id];
@@ -601,6 +620,75 @@ void BattleSimulation::updateFaceDeployments(float seconds) {
         const bool returning = g.route == SmallGroupRoute::Returning || g.route == SmallGroupRoute::ReliefReserve || g.route == SmallGroupRoute::ReliefWithdraw;
         const auto fronts = returning ? ContactFronts{} : measureContactFronts(bodies, team, id);
         advanceFaceDeployment(g.faceDeployment, allocateContactFronts(fronts, g.strength), g.strength, seconds);
+    }
+}
+bool BattleSimulation::clearShot(const ArrowVolley& arrow) const {
+    for (unsigned sample = 1; sample < 32; ++sample) {
+        const float fraction = sample / 32.0f;
+        const auto p = arrow.position(fraction);
+        const float height = arrow.height(fraction);
+        if (height <= terrainHeight(p.x, p.z) + .1f) return false;
+        for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
+            if ((team == arrow.team && id == arrow.shooter) || (team != arrow.team && id == arrow.target) ||
+                formations[team].organization.smallGroups[id].strength <= 0) continue;
+            const auto body = formations[team].groupPosition(id);
+            if (battleDistance(p, body) < 2.25f && height <= terrainHeight(body.x, body.z) + 2) return false;
+        }
+    }
+    return true;
+}
+
+void BattleSimulation::updateArrows(float seconds, std::array<std::array<float, 25>, 2>& damage, const std::array<bool, 2>& moved) {
+    for (auto& arrow : arrows) {
+        arrow.age = std::min(arrow.duration, arrow.age + seconds);
+        const float fraction = arrow.age / arrow.duration;
+        const auto p = arrow.position(fraction);
+        bool blocked = arrow.height(fraction) <= terrainHeight(p.x, p.z) + .1f;
+        for (unsigned team = 0; team < 2 && !blocked; ++team) for (unsigned id = 0; id < 25; ++id) {
+            if ((team == arrow.team && id == arrow.shooter) || (team != arrow.team && id == arrow.target) ||
+                formations[team].organization.smallGroups[id].strength <= 0) continue;
+            const auto body = formations[team].groupPosition(id);
+            if (battleDistance(p, body) < 2.25f && arrow.height(fraction) <= terrainHeight(body.x, body.z) + 2) { blocked = true; break; }
+        }
+        if (blocked) { arrow.age = arrow.duration; continue; }
+        if (arrow.age < arrow.duration) continue;
+        auto& victim = formations[1 - arrow.team].organization.smallGroups[arrow.target];
+        // 発射時の狙点に到着する。追尾せず、射手が敗走した後も飛翔は継続する。
+        if (victim.strength <= 0 || battleDistance(arrow.aim, formations[1 - arrow.team].groupPosition(arrow.target)) > 2.25f) continue;
+        const float loss = std::min(arrow.damage, std::max(0.0f, victim.strength - damage[1 - arrow.team][arrow.target]));
+        damage[1 - arrow.team][arrow.target] += loss;
+        victim.rangedLoss += loss; victim.lastRangedImpact = arrow.aim;
+        if (loss > 0) ++volleysHit;
+    }
+    std::erase_if(arrows, [](const ArrowVolley& arrow) { return arrow.age >= arrow.duration; });
+    for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
+        auto& formation = formations[team];
+        auto& group = formation.organization.smallGroups[id];
+        if (formation.groupUnit(id) != UnitType::Archer) continue;
+        group.shotCooldown = std::max(0.0f, group.shotCooldown - seconds);
+        if (group.routed || group.strength <= 0 || formation.defeated()) continue;
+        group.combatWait = CombatWait::OutOfRange;
+        if (group.attackTarget < 0) continue;
+        const auto p = formation.groupPosition(id), q = formations[1 - team].groupPosition(group.attackTarget);
+        const float distance = battleDistance(p, q);
+        if (distance < BowProfile::minRange || distance > BowProfile::maxRange) continue;
+        bool closeEnemy = false;
+        for (unsigned other = 0; other < 25; ++other)
+            if (formations[1 - team].organization.smallGroups[other].strength > 0 &&
+                battleDistance(p, formations[1 - team].groupPosition(other)) < BowProfile::minRange) closeEnemy = true;
+        if (closeEnemy || moved[team] || group.route != SmallGroupRoute::None) { group.combatWait = CombatWait::Held; continue; }
+        const float facing = (std::cos(group.heading) * (q.x - p.x) + std::sin(group.heading) * (q.z - p.z)) / distance;
+        if (facing < .94f) { group.combatWait = CombatWait::Turning; continue; }
+        ArrowVolley arrow{team, id, static_cast<unsigned>(group.attackTarget), p, q};
+        if (!clearShot(arrow)) { group.combatWait = CombatWait::Obstructed; continue; }
+        group.combatWait = CombatWait::None;
+        if (group.shotCooldown > 0) continue;
+        const float shooters = std::min(BowProfile::maxShooters, group.strength);
+        arrow.duration = distance / BowProfile::arrowSpeed;
+        arrow.damage = shooters * BowProfile::damagePerShooter * (.5f + group.morale / 200);
+        arrows.push_back(arrow); ++volleysFired;
+        group.lastShot = time; group.shotCooldown = BowProfile::interval;
+        group.activeFighters = shooters; group.activeOpponents[group.attackTarget] = shooters; group.canAttack = true;
     }
 }
 ContactFronts BattleSimulation::contactFronts(unsigned team, unsigned group) const {
