@@ -9,6 +9,13 @@ enum class SmallGroupState { Waiting, Advancing, Engaged, Retreating, Fleeing, R
 enum class SmallGroupRoute { None, Outward, Forward, Returning, ReliefReserve, ReliefWithdraw, ReliefCorridor };
 enum class CombatWait { None, NoTarget, OutOfRange, Turning, Obstructed, PathBlocked, Held, Returning, Detouring };
 enum class TacticalDecision { Search, Advance, Engage, Flank, Reserve, Recover, Hold, Retreat };
+enum class CavalryPhase { None, Disengaging, Regrouping };
+struct CavalryTactics {
+    CavalryPhase phase = CavalryPhase::None;
+    BattlePoint destination{};
+    unsigned handledCharge = 0;
+    bool blocked = false;
+};
 struct TacticalAwareness {
     unsigned enemies = 0, allies = 0;
     float enemyStrength = 0, alliedStrength = 0;
@@ -39,6 +46,7 @@ struct SmallGroup {
     float chargeDistance = 0, chargeWindow = 0, chargeCooldown = 0;
     unsigned charges = 0;
     double lastCharge = -10;
+    CavalryTactics cavalry;
     double lastShot = -10;
     float rangedLoss = 0;
     BattlePoint lastRangedImpact{};

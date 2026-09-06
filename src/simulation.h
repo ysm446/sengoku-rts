@@ -92,6 +92,7 @@ private:
     void step(float seconds);
     void updateSmallGroups(float seconds);
     void updateDecisions();
+    void updateCavalryTactics(float seconds);
     void updateRouts(float seconds);
     void updateFaceDeployments(float seconds);
     void updateArrows(float seconds, std::array<std::array<float, 25>, 2>& damage, const std::array<bool, 2>& moved);

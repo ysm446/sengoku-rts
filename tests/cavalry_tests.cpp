@@ -30,6 +30,17 @@ float impactLoss(UnitType enemy, bool front, bool charge) {
     battle->update(1.0f/60);
     return 20-battle->formations[1].organization.smallGroups[12].strength;
 }
+std::unique_ptr<BattleSimulation> afterCharge(UnitType enemy=UnitType::Samurai) {
+    auto battle=duel(5.5f,enemy);
+    auto& g=battle->formations[0].organization.smallGroups[12];
+    g.charges=1;g.lastCharge=-1;g.chargeCooldown=7;
+    return battle;
+}
+void placeSupport(BattleSimulation& battle,float x,float z) {
+    auto& f=battle.formations[0];auto& support=f.organization.smallGroups[13];
+    support.offsetX=x-f.x-5.2f;support.offsetZ=z-f.z;
+    support.resting=true;support.fatigue=20;
+}
 int main() {
     try {
         auto battle = duel();
@@ -43,6 +54,80 @@ int main() {
         }
         std::cout << "charges=" << g.charges << " distance=" << g.chargeDistance << '\n';
         require(g.charges == 1, "Approaching cavalry did not charge");
+        auto repeat=std::make_unique<BattleSimulation>(*battle);
+        bool withdrew=false,regrouped=false;
+        for(unsigned tick=0;tick<2400;++tick) {
+            repeat->update(1.0f/60);
+            const auto& rider=repeat->formations[0].organization.smallGroups[12];
+            withdrew|=rider.cavalry.phase==CavalryPhase::Disengaging;
+            regrouped|=rider.cavalry.phase==CavalryPhase::Regrouping;
+            if(rider.cavalry.phase!=CavalryPhase::None) require(!rider.canAttack && rider.chargeDistance==0,"Withdrawing cavalry attacked or gained run-up");
+            require(battleDistance(repeat->formations[0].groupPosition(12),repeat->formations[1].groupPosition(12))>=4.5f,"Withdrawing cavalry crossed enemy");
+            if(rider.charges>=2)break;
+        }
+        const auto& repeated=repeat->formations[0].organization.smallGroups[12];
+        std::cout<<"repeat charges="<<repeated.charges<<" phase="<<static_cast<unsigned>(repeated.cavalry.phase)<<" morale="<<repeated.morale<<'\n';
+        require(withdrew && regrouped && repeated.charges>=2,"Cavalry failed to disengage and charge again");
+        for(const auto enemy:{UnitType::Samurai,UnitType::Spearman,UnitType::Archer}) {
+            auto supported=afterCharge(enemy);placeSupport(*supported,-2,7);
+            supported->formations[0].organization.smallGroups[13].resting=false;
+            supported->update(1.0f/60);
+            require((supported->formations[0].organization.smallGroups[12].cavalry.phase==CavalryPhase::Disengaging)==(enemy==UnitType::Spearman),
+                "Cavalry ignored support or braced spears");
+        }
+        auto vulnerable=afterCharge(UnitType::Archer);vulnerable->update(1.0f/60);
+        require(vulnerable->formations[0].organization.smallGroups[12].cavalry.phase==CavalryPhase::None,"Cavalry abandoned a vulnerable archer");
+        auto rally=duel(15);
+        auto& rallying=rally->formations[0].organization.smallGroups[12];
+        rallying.cavalry.phase=CavalryPhase::Regrouping;rallying.morale=45;
+        rally->update(2);
+        require(rallying.morale>50 && rallying.cavalry.phase==CavalryPhase::Regrouping,"Regrouping cavalry did not recover safely or resumed too early");
+        rallying.morale=60;rallying.strength=9;rally->update(1.0f/60);
+        require(rallying.cavalry.phase==CavalryPhase::Regrouping,"Depleted cavalry resumed charging");
+        rallying.strength=20;rally->update(1.0f/60);
+        require(rallying.cavalry.phase==CavalryPhase::None,"Ready cavalry did not resume approach");
+        auto unsafe=duel(8);
+        auto& unsafeRider=unsafe->formations[0].organization.smallGroups[12];
+        unsafeRider.cavalry.phase=CavalryPhase::Regrouping;unsafeRider.morale=45;
+        unsafe->update(1);
+        require(unsafeRider.morale==45 && unsafeRider.cavalry.phase==CavalryPhase::Regrouping,"Cavalry recovered near an enemy");
+        auto trapped=afterCharge();placeSupport(*trapped,-5,0);
+        const auto trappedStart=trapped->formations[0].groupPosition(12);
+        trapped->update(1.0f/60);
+        auto& trappedRider=trapped->formations[0].organization.smallGroups[12];
+        require(trappedRider.cavalry.blocked && trappedRider.cavalry.phase==CavalryPhase::None &&
+            battleDistance(trappedStart,trapped->formations[0].groupPosition(12))<.001f,"Cavalry used a blocked retreat");
+        placeSupport(*trapped,-30,30);trapped->update(1.0f/60);
+        require(trappedRider.cavalry.phase==CavalryPhase::Disengaging,"Cavalry failed to retry cleared retreat");
+        auto diagonal=afterCharge();placeSupport(*diagonal,-8,0);diagonal->update(1.0f/60);
+        require(diagonal->formations[0].organization.smallGroups[12].cavalry.phase==CavalryPhase::Disengaging &&
+            std::abs(diagonal->formations[0].organization.smallGroups[12].cavalry.destination.z)>5,"Cavalry did not select an open diagonal retreat");
+        auto withdrawing=afterCharge();withdrawing->update(1.0f/60);
+        const auto withdrawStart=withdrawing->formations[0].groupPosition(12);
+        withdrawing->update(.5f);
+        require(battleDistance(withdrawStart,withdrawing->formations[0].groupPosition(12))<.001f,"Cavalry slid before turning away");
+        auto interrupted=std::make_unique<BattleSimulation>(*withdrawing);
+        interrupted->hold(0);interrupted->update(1);
+        const auto& stopped=interrupted->formations[0].organization.smallGroups[12];
+        require(stopped.cavalry.phase==CavalryPhase::None && stopped.cavalry.handledCharge==stopped.charges &&
+            battleDistance(withdrawStart,interrupted->formations[0].groupPosition(12))<.001f,"Hold failed to cancel cavalry retreat");
+        interrupted=std::make_unique<BattleSimulation>(*withdrawing);interrupted->move(0,-50,0);
+        require(interrupted->formations[0].organization.smallGroups[12].cavalry.phase==CavalryPhase::None,"Move retained autonomous cavalry retreat");
+        interrupted=std::make_unique<BattleSimulation>(*withdrawing);interrupted->formations[0].organization.smallGroups[12].morale=10;
+        interrupted->update(1.0f/60);
+        require(interrupted->formations[0].organization.smallGroups[12].routed &&
+            interrupted->formations[0].organization.smallGroups[12].cavalry.phase==CavalryPhase::None,"Rout retained cavalry retreat");
+        auto cadence=afterCharge(),sliced=afterCharge(),reversed=afterCharge();
+        std::swap(reversed->formations[0],reversed->formations[1]);
+        cadence->update(24);reversed->update(24);for(unsigned tick=0;tick<1440;++tick)sliced->update(1.0f/60);
+        const auto& expected=cadence->formations[0].organization.smallGroups[12];
+        for(const auto* actual:{&sliced->formations[0].organization.smallGroups[12],&reversed->formations[1].organization.smallGroups[12]})
+            require(expected.charges==actual->charges && expected.approachX==actual->approachX && expected.approachZ==actual->approachZ &&
+                expected.cavalry.phase==actual->cavalry.phase && expected.cavalry.handledCharge==actual->cavalry.handledCharge &&
+                expected.strength==actual->strength,"Cavalry retreat depends on cadence or team color");
+        withdrawing->running=false;const auto frozen=withdrawing->formations[0].groupPosition(12);withdrawing->update(10);
+        require(battleDistance(frozen,withdrawing->formations[0].groupPosition(12))==0 &&
+            withdrawing->formations[0].organization.smallGroups[12].cavalry.phase==CavalryPhase::Disengaging,"Pause advanced retreat");
         battle->hold(0); battle->update(10);
         require(g.charges == 1 && g.chargeWindow == 0, "Stationary cavalry repeated charge");
         auto close = duel(5.5f); close->update(1);
@@ -78,7 +163,8 @@ int main() {
         for (const auto& f : fast->formations) {
             unsigned cavalry=0; float strength=0;
             for (unsigned id=0; id<25; ++id) { cavalry += f.groupUnit(id)==UnitType::Cavalry; strength += f.organization.smallGroups[id].strength;
-                require(f.organization.smallGroups[id].charges==0, "Reset retained charge state"); }
+                require(f.organization.smallGroups[id].charges==0 && f.organization.smallGroups[id].cavalry.phase==CavalryPhase::None &&
+                    f.organization.smallGroups[id].cavalry.handledCharge==0, "Reset retained charge state"); }
             require(cavalry==4 && strength==500, "Mixed cavalry composition lost strength");
         }
         fast->running = true; fast->update(20);

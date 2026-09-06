@@ -117,6 +117,8 @@ struct WindowState {
             group.state == SmallGroupState::Routed ? L"敗走済" : group.route == SmallGroupRoute::Returning ? L"復帰中" :
             group.route == SmallGroupRoute::ReliefCorridor ? L"交代通路を確保・復帰中" : group.resting ? L"後方で再集結中" : group.route == SmallGroupRoute::ReliefReserve ? L"前列交代中" :
             group.route == SmallGroupRoute::ReliefWithdraw ? L"交代後退中" :
+            group.cavalry.phase == CavalryPhase::Disengaging ? L"騎馬離脱中" :
+            group.cavalry.phase == CavalryPhase::Regrouping ? L"騎馬再突撃準備中" :
             group.route == SmallGroupRoute::Outward && group.state != SmallGroupState::Engaged ? L"側方へ展開中" :
             group.route == SmallGroupRoute::Forward && group.state != SmallGroupState::Engaged ? L"側面へ前進中" :
             group.canAttack && simulation.result == BattleResult::Ongoing ? L"攻撃" : group.state == SmallGroupState::Engaged ? L"接敵" : group.state == SmallGroupState::Retreating ? L"撤退" :
@@ -129,12 +131,12 @@ struct WindowState {
             (group.attackTarget >= 0 ? L" 目標小組" + std::to_wstring(group.attackTarget+1) : L"") + L"]";
         if (simulation.formations[selected].groupUnit(selectedGroup) == UnitType::Cavalry)
             text += L" [騎馬・突撃" + std::to_wstring(group.charges) + L"回" +
-                (simulation.time - group.lastCharge < 1 ? L"・突撃命中]" : group.chargeDistance > 0 ? L"・助走中]" : L"]");
+                (group.cavalry.blocked ? L"・退路閉塞]" : simulation.time - group.lastCharge < 1 ? L"・突撃命中]" : group.chargeDistance > 0 ? L"・助走中]" : L"]");
         const auto fronts = simulation.contactFronts(static_cast<unsigned>(selected), static_cast<unsigned>(selectedGroup));
         float totalWidth = 0;
         for (const auto& face : fronts.faces) totalWidth += face.width();
         if (totalWidth > 0 || group.faceDeployment.total() > 0.01f) {
-            const bool returning = group.route == SmallGroupRoute::Returning || group.route == SmallGroupRoute::ReliefReserve ||
+            const bool returning = group.cavalry.phase != CavalryPhase::None || group.route == SmallGroupRoute::Returning || group.route == SmallGroupRoute::ReliefReserve ||
                 group.route == SmallGroupRoute::ReliefWithdraw || group.route == SmallGroupRoute::ReliefCorridor;
             const auto allocation = allocateContactFronts(returning ? ContactFronts{} : fronts, group.strength);
             const auto decimal = [](float value) {
