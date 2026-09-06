@@ -62,6 +62,8 @@ int main(){
         for(const auto type:{UnitType::Spearman,UnitType::Samurai}) {
             BattleSimulation following;following.reset(type);
             SoldierVisuals followers;followers.update(following);
+            // 単体の移動上限を検証する。混雑による押し戻しは別途検証する。
+            for(unsigned id=1;id<followers.soldiers.size();++id)followers.soldiers[id].life=SoldierLife::Fallen;
             const auto start=followers.soldiers[0].position;
             following.formations[0].x+=10;
             followers.soldiers[0].heading=3.141592654f;
@@ -94,6 +96,21 @@ int main(){
             following.reset(type);followers.update(following);
             require(followers.soldiers[0].followSpeed==0 && followers.soldiers[0].position.x==start.x,"Follower reset retained momentum");
         }
-        std::cout<<"PASS: sword range, facing, obstruction, pause, fixed updates and individual reach\n";return 0;
+        SoldierVisuals overlap;overlap.soldiers.resize(3);
+        overlap.soldiers[0].position={-.05f,0,0};overlap.soldiers[1].position={.05f,0,0};
+        overlap.soldiers[2].life=SoldierLife::Fallen;
+        const auto corpse=overlap.soldiers[2].position;
+        overlap.separateOverlaps();
+        require(std::abs(overlap.soldiers[1].position.x-overlap.soldiers[0].position.x-SoldierVisuals::minimumSpacing)<.0001f,
+            "Overlapping circles were not separated");
+        require(std::abs(overlap.soldiers[0].position.x+overlap.soldiers[1].position.x)<.0001f,"Separation favored one soldier");
+        require(overlap.soldiers[2].position.x==corpse.x && overlap.soldiers[2].position.y==corpse.y,"Collision moved a corpse");
+        const auto separated=overlap.soldiers;overlap.separateOverlaps();
+        require(std::abs(overlap.soldiers[0].position.x-separated[0].position.x)<.0001f,"Separated soldiers kept drifting");
+        overlap.soldiers[0].position=overlap.soldiers[1].position={0,0,0};overlap.separateOverlaps();
+        require(std::isfinite(overlap.soldiers[0].position.x) &&
+            std::abs(overlap.soldiers[1].position.x-overlap.soldiers[0].position.x-SoldierVisuals::minimumSpacing)<.0001f,
+            "Coincident soldiers could not separate");
+        std::cout<<"PASS: melee reach, facing, movement and visual collision\n";return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

@@ -3,6 +3,49 @@
 #include <cmath>
 #include <map>
 #include <limits>
+#include <unordered_map>
+
+void SoldierVisuals::separateOverlaps() {
+    // 固定IDの全表示兵士で判定する。描画する人数や陣営順序によって押し合いを変えない。
+    const auto key = [](int x, int z) {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32) | static_cast<std::uint32_t>(z);
+    };
+    const auto cell = [](float coordinate) { return static_cast<int>(std::floor(coordinate / minimumSpacing)); };
+    std::unordered_map<std::uint64_t, std::vector<unsigned>> grid;
+    grid.reserve(soldiers.size());
+    for (unsigned i = 0; i < soldiers.size(); ++i) if (soldiers[i].life == SoldierLife::Alive)
+        grid[key(cell(soldiers[i].position.x), cell(soldiers[i].position.z))].push_back(i);
+    std::vector<DirectX::XMFLOAT2> corrections(soldiers.size());
+    for (unsigned i = 0; i < soldiers.size(); ++i) {
+        const auto& a = soldiers[i];
+        if (a.life != SoldierLife::Alive) continue;
+        const int x = cell(a.position.x), z = cell(a.position.z);
+        for (int dz = -1; dz <= 1; ++dz) for (int dx = -1; dx <= 1; ++dx) {
+            const auto found = grid.find(key(x + dx, z + dz));
+            if (found == grid.end()) continue;
+            for (unsigned j : found->second) if (j > i) {
+                const auto& b = soldiers[j];
+                float vx = b.position.x - a.position.x, vz = b.position.z - a.position.z;
+                const float distance = std::hypot(vx, vz);
+                if (distance >= minimumSpacing) continue;
+                if (distance > 0.00001f) { vx /= distance; vz /= distance; }
+                else { vx = 1; vz = 0; } // 完全一致でも有限の方向を持たせる。
+                const float push = (minimumSpacing - distance) * 0.5f;
+                corrections[i].x -= vx * push; corrections[i].y -= vz * push;
+                corrections[j].x += vx * push; corrections[j].y += vz * push;
+            }
+        }
+    }
+    for (unsigned i = 0; i < soldiers.size(); ++i) {
+        auto& s = soldiers[i]; const auto push = corrections[i];
+        const float distance = std::hypot(push.x, push.y);
+        if (distance == 0) continue;
+        // 混雑時の補正量に上限を設ける。残る重なりは次の更新で再判定する。
+        const float scale = std::min(1.0f, minimumSpacing * 0.5f / distance);
+        s.position.x += push.x * scale; s.position.z += push.y * scale;
+        s.position.y = terrainHeight(s.position.x, s.position.z) + 0.03f;
+    }
+}
 
 DirectX::XMFLOAT2 SoldierVisuals::offset(unsigned id) {
     constexpr unsigned columns = 71;
@@ -110,6 +153,7 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
     }
     if (dt > 0) {
         // 損害は相手に届く生存前列へだけ割り当てる。両軍の候補は死亡確定前に求める。
+        separateOverlaps();
         std::array<std::vector<unsigned>, 2> casualties;
         std::array<std::array<unsigned, 25>, 2> casualtyBudget{};
         std::vector<unsigned> hits;

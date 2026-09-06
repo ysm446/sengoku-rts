@@ -50,6 +50,8 @@ struct SoldierVisuals {
     std::array<std::uint64_t, 2> impacts{};
     std::array<DirectX::XMFLOAT3, 2> impactPositions{};
     void update(const BattleSimulation& simulation);
+    void separateOverlaps();
+    static constexpr float minimumSpacing = 0.22f; // 固定密度の表示兵士用。実兵の体格ではない。
     static DirectX::XMFLOAT2 offset(unsigned id);
 };
 
