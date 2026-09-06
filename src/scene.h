@@ -4,6 +4,7 @@
 #include "unit_type.h"
 #include "formation_drill.h"
 #include "terrain.h"
+#include "emotions.h"
 #include <DirectXMath.h>
 #include <cstdint>
 #include <filesystem>
@@ -75,6 +76,8 @@ struct Scene {
     std::size_t routMarkerStart = 0;
     static constexpr unsigned routMarkerCount = 96 + 25 * 12;
     std::size_t arrowStart = 0;
+    std::size_t emotionStart = 0;
+    EmotionSignals emotions;
     static constexpr unsigned arrowCount = 300;
     std::vector<std::uint32_t> atlas;
     unsigned soldierCount = 0;

@@ -68,6 +68,27 @@ void makeAtlas(Scene& scene) {
     // 空きタイル12を地表の点、13を非表示用の透明タイルとして使う。
     for (unsigned y = 12; y < 52; ++y) for (unsigned x = 12; x < 52; ++x)
         scene.atlas[(Scene::tileHeight + y) * Scene::atlasWidth + x] = rgba(255, 255, 255);
+    // 空きタイル24〜26。32pxの仮アイコンを透明背景へ2倍で描く。
+    for (unsigned icon = 0; icon < 3; ++icon) {
+        auto box = [&](int x0, int y0, int x1, int y1, std::uint32_t color) {
+            for (int y = y0 * 2; y < (y1 + 1) * 2; ++y)
+                for (int x = x0 * 2; x < (x1 + 1) * 2; ++x)
+                    scene.atlas[(128 + y) * Scene::atlasWidth + icon * 64 + x] = color;
+        };
+        box(3, 2, 28, 25, ink); box(6, 24, 11, 29, ink);
+        box(4, 3, 27, 24, cloth); box(7, 24, 10, 27, cloth);
+        if (icon == 0) {
+            box(10, 12, 22, 21, rgba(219, 84, 27)); box(12, 8, 19, 20, rgba(219, 84, 27));
+            box(15, 5, 17, 18, rgba(219, 84, 27)); box(14, 14, 18, 21, rgba(255, 210, 62));
+        } else {
+            box(9, 7, 22, 21, ink);
+            box(10, 8, 21, 20, icon == 1 ? rgba(234, 184, 69) : rgba(131, 189, 211));
+            box(12, 11, 13, 13, ink); box(18, 11, 19, 13, ink);
+            box(14, 17, 17, icon == 1 ? 17 : 19, ink);
+            if (icon == 1) { box(23, 7, 24, 10, rgba(42, 123, 204)); box(22, 10, 25, 13, rgba(42, 123, 204)); }
+            else { box(6, 11, 6, 17, ink); box(25, 11, 25, 17, ink); }
+        }
+    }
 }
 }
 
@@ -189,6 +210,8 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     for (unsigned i = 0; i < Scene::routMarkerCount; ++i) add(0, 0, 0.5f, 0.5f, 13, white);
     scene.arrowStart = scene.sprites.size();
     for (unsigned i = 0; i < Scene::arrowCount; ++i) add(0, 0, 1, .14f, 13, white);
+    scene.emotionStart = scene.sprites.size();
+    for (unsigned i = 0; i < 50; ++i) add(0, 0, 2.4f, 2.4f, 13, white);
     return scene;
 }
 
@@ -345,6 +368,23 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
         sprite.tile = scene.generatedSoldiers ? tileOffset + 4 + camera.spriteDirection(heading) + frame * Scene::atlasColumns : 0;
     }
     if (!scene.inspect) {
+        scene.emotions.update(simulation);
+        std::vector<DirectX::XMFLOAT2> occupied;
+        const auto right = camera.right(), up = camera.up();
+        for (unsigned i = 0; i < 50; ++i) scene.sprites[scene.emotionStart + i].tile = 13;
+        // 恐怖を優先し、投影後の矩形で重なりを抑える。同時表示は8個まで。
+        for (auto emotion : {Emotion::Fear, Emotion::Anxiety, Emotion::Motivation}) for (unsigned i = 0; i < 50; ++i) {
+            if (scene.emotions.signals[i].visible != emotion || occupied.size() >= 8) continue;
+            const auto p = simulation.formations[i / 25].groupPosition(i % 25);
+            const float y = terrainHeight(p.x, p.z) + 4;
+            const DirectX::XMFLOAT2 screen{p.x * right.x + p.z * right.z, p.x * up.x + y * up.y + p.z * up.z};
+            bool overlap = false;
+            for (const auto& other : occupied) overlap |= std::abs(screen.x - other.x) < 2.5f && std::abs(screen.y - other.y) < 2.5f;
+            if (overlap) continue;
+            occupied.push_back(screen);
+            scene.sprites[scene.emotionStart + i] = {{p.x, y, p.z}, {2.4f, 2.4f},
+                23 + static_cast<unsigned>(emotion), {1, 1, 1}, right, up, .5f};
+        }
         for (unsigned i = 0; i < Scene::arrowCount; ++i) scene.sprites[scene.arrowStart + i].tile = 13;
         unsigned marker = 0;
         for (const auto& arrow : simulation.arrows) {
