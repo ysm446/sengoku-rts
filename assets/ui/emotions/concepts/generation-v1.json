@@ -1,0 +1,18 @@
+{
+  "tool": "built-in image_gen",
+  "status": "concept_only_rgb_checkerboard_not_transparent",
+  "images": [
+    {
+      "name": "motivation",
+      "prompt": "Use case: stylized-concept. Asset type: original pixel-art emotion icon for a Sengoku battle RTS, appearing briefly above a troop. Create ONE isolated icon, centered on a square truly transparent background with alpha, occupying central 70%. Strict chunky low-resolution pixel art designed on a 32 by 32 logical grid and enlarged with hard nearest-neighbor edges. Limited palette, dark brown outline, flat clusters of pixels, no anti-aliasing, no gradients, no texture, no shadow outside icon. No text, no labels, no border, no speech-bubble frame (game will add it separately), no scene, no checkerboard pattern. Readable as a tiny game sprite, original art without copying existing game assets. Subject: A single bold orange and gold flame representing enthusiasm and rising fighting spirit. Three simple flame tips, one pale yellow inner flame, strong recognizable silhouette."
+    },
+    {
+      "name": "anxiety",
+      "prompt": "Use case: stylized-concept. Asset type: original pixel-art emotion icon for a Sengoku battle RTS, appearing briefly above a troop. Create ONE isolated icon, centered on a square truly transparent background with alpha, occupying central 70%. Strict chunky low-resolution pixel art designed on a 32 by 32 logical grid and enlarged with hard nearest-neighbor edges. Limited palette, dark brown outline, flat clusters of pixels, no anti-aliasing, no gradients, no texture, no shadow outside icon. No text, no labels, no border, no speech-bubble frame (game will add it separately), no scene, no checkerboard pattern. Readable as a tiny game sprite, original art without copying existing game assets. Subject: A worried amber-yellow face with two small eyes, raised slanting eyebrows, a small uneasy mouth, and ONE large blue sweat drop at upper right. Simple front-facing round face, visibly worried but not terrified."
+    },
+    {
+      "name": "fear",
+      "prompt": "Use case: stylized-concept. Asset type: original pixel-art emotion icon for a Sengoku battle RTS, appearing briefly above a troop. Create ONE isolated icon, centered on a square truly transparent background with alpha, occupying central 70%. Strict chunky low-resolution pixel art designed on a 32 by 32 logical grid and enlarged with hard nearest-neighbor edges. Limited palette, dark brown outline, flat clusters of pixels, no anti-aliasing, no gradients, no texture, no shadow outside icon. No text, no labels, no border, no speech-bubble frame (game will add it separately), no scene, no checkerboard pattern. Readable as a tiny game sprite, original art without copying existing game assets. Subject: A terrified pale blue face with two wide dark eyes and an open dark mouth, angular raised eyebrows, and two short dark trembling marks beside the face. Simple front-facing round face, unmistakable fear."
+    }
+  ]
+}
