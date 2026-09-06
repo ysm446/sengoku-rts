@@ -268,7 +268,7 @@ std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& c
     return result;
 }
 
-void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected, int selectedGroup) {
+void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected, int selectedGroup, float aspect) {
     if (!scene.inspect) {
         for (unsigned i = 0; i < Scene::routMarkerCount; ++i) scene.sprites[scene.routMarkerStart + i].tile = 13;
         if (selected >= 0 && selected < 2 && selectedGroup >= 0 && selectedGroup < 25 && simulation.result == BattleResult::Ongoing) {
@@ -371,12 +371,19 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
         scene.emotions.update(simulation);
         std::vector<DirectX::XMFLOAT2> occupied;
         const auto right = camera.right(), up = camera.up();
+        const auto projection = camera.matrix(aspect);
         for (unsigned i = 0; i < 50; ++i) scene.sprites[scene.emotionStart + i].tile = 13;
         // 恐怖を優先し、投影後の矩形で重なりを抑える。同時表示は8個まで。
         for (auto emotion : {Emotion::Fear, Emotion::Anxiety, Emotion::Motivation}) for (unsigned i = 0; i < 50; ++i) {
             if (scene.emotions.signals[i].visible != emotion || occupied.size() >= 8) continue;
             const auto p = simulation.formations[i / 25].groupPosition(i % 25);
             const float y = terrainHeight(p.x, p.z) + 4;
+            const auto projected = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(p.x, y, p.z, 1), projection);
+            const float halfWidth = 2.4f / camera.span, halfHeight = halfWidth * aspect;
+            // 一部でも画面に入る吹き出しは残す。画面外は表示枠を使わない。
+            if (std::abs(DirectX::XMVectorGetX(projected)) > 1 + halfWidth ||
+                std::abs(DirectX::XMVectorGetY(projected)) > 1 + halfHeight ||
+                DirectX::XMVectorGetZ(projected) < 0 || DirectX::XMVectorGetZ(projected) > 1) continue;
             const DirectX::XMFLOAT2 screen{p.x * right.x + p.z * right.z, p.x * up.x + y * up.y + p.z * up.z};
             bool overlap = false;
             for (const auto& other : occupied) overlap |= std::abs(screen.x - other.x) < 2.5f && std::abs(screen.y - other.y) < 2.5f;

@@ -435,7 +435,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             SendMessageW(window, WM_KEYDOWN, VK_HOME, 0);
             rebuildScene();
             state.simulation.running = options.march;
-            updateSceneSprites(activeScene, state.simulation, state.camera);
+            updateSceneSprites(activeScene, state.simulation, state.camera, -1, -1, static_cast<float>(state.width) / state.height);
             unsigned spears = 0, swords = 0, archers = 0;
             for (const auto& binding : activeScene.soldierBindings) {
                 const auto tile = activeScene.sprites[binding.spriteIndex].tile;
@@ -612,7 +612,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 // 描画間にも個体状態を更新し、接敵・補充・攻撃を通常実行に近い間隔で確認する。
                 for (unsigned step = 0; step < 10; ++step) {
                     state.battleClock.advance(state.simulation, *activeScene.individuals, 0.1f);
-                    updateSceneSprites(activeScene, state.simulation, state.camera, state.selected, state.selectedGroup);
+                    updateSceneSprites(activeScene, state.simulation, state.camera, state.selected, state.selectedGroup, static_cast<float>(state.width) / state.height);
                     observedRetreat |= state.simulation.formations[0].defeated() || state.simulation.formations[1].defeated();
                     for (const auto& f : state.simulation.formations) for (unsigned id = 0; id < 25; ++id)
                         observedFrontRelief |= f.organization.smallGroups[id].slot != id;
@@ -631,7 +631,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             auto visualSimulation = state.simulation;
             if (state.inspect) visualSimulation.time = state.inspectTime;
             if(state.drillEnabled) updateDrillSprites(activeScene,state.drill,state.camera);
-            else updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected, state.selectedGroup);
+            else updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected, state.selectedGroup, static_cast<float>(state.width) / state.height);
             const bool audible = !state.muted && !state.inspect && GetForegroundWindow() == window && state.simulation.running;
             const auto impacts = impactTracker.update(*activeScene.individuals, audible);
             if (!audible) audio.silence();
