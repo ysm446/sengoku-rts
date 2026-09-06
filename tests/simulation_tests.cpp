@@ -31,7 +31,7 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
                     "Face deployment depends on update interval");
             require(g.state == h.state && std::abs(g.offsetX - h.offsetX) < 0.001f &&
                 std::abs(g.offsetZ - h.offsetZ) < 0.001f && std::abs(g.fatigue - h.fatigue) < 0.001f &&
-                g.route == h.route && g.routeLateral == h.routeLateral && g.slot == h.slot && g.routed == h.routed &&
+                g.route == h.route && g.routeLateral == h.routeLateral && g.flankClosing == h.flankClosing && g.slot == h.slot && g.routed == h.routed &&
                 std::abs(g.fleeX - h.fleeX) < 0.001f && std::abs(g.fleeZ - h.fleeZ) < 0.001f &&
                 g.fleeBlocked == h.fleeBlocked && g.fleeSide == h.fleeSide &&
                 std::abs(g.routShock - h.routShock) < 0.001f &&

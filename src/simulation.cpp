@@ -135,6 +135,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             else if (g.route == SmallGroupRoute::None) g.fatigue = std::max(0.0f, g.fatigue - seconds * 0.5f);
             if (g.route != SmallGroupRoute::None && g.route != SmallGroupRoute::ReliefReserve && g.route != SmallGroupRoute::ReliefWithdraw && g.route != SmallGroupRoute::ReliefCorridor &&
                 (!contact || g.fatigue >= 8 || g.strength <= g.nominalStrength * 0.5f || g.morale <= 30 ||
+                (g.flankClosing && (g.attackTarget < 0 || g.awareness.cautious)) ||
                 g.routeAlongX != alongX || g.routeForward * sign < 0)) g.route = SmallGroupRoute::Returning;
         }
         for (unsigned sideIndex = 0; sideIndex < f.organization.frontReliefs.size(); ++sideIndex) {
@@ -308,7 +309,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                         [slot](const SmallGroup& group) { return group.slot == slot; });
                     if (g.routed || g.resting || g.awareness.cautious || f.groupUnit(static_cast<unsigned>(&g - f.organization.smallGroups.data())) == UnitType::Archer || g.approachX != 0 || g.approachZ != 0 || g.route != SmallGroupRoute::None || g.fatigue > 2 || g.strength <= g.nominalStrength * 0.5f || g.morale <= 30 || g.offsetX != 0 || g.offsetZ != 0 ||
                         g.state == SmallGroupState::Engaged) continue;
-                    g.route = SmallGroupRoute::Outward; g.routeAlongX = alongX;
+                    g.route = SmallGroupRoute::Outward; g.routeAlongX = alongX; g.flankClosing = false;
                     g.routeForward = sign * (6.8f + depth * 5.2f);
                     const float side = lane == 0 ? -1.0f : 1.0f;
                     const float lateralGap = alongX ? enemy.z-f.z : enemy.x-f.x;
@@ -490,6 +491,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             const float lateral = routeX ? g.offsetZ : g.offsetX;
             const float forward = routeX ? g.offsetX : g.offsetZ;
             if (relieving) {
+                g.flankClosing = false;
                 const auto reservation = std::find_if(f.organization.frontReliefs.begin(), f.organization.frontReliefs.end(),
                     [id](const FrontRelief& value) { return value.front == static_cast<int>(id) || value.reserve == static_cast<int>(id) || (value.corridorGroups & (1u << id)); });
                 if (reservation == f.organization.frontReliefs.end()) { g.route = SmallGroupRoute::Returning; continue; }
@@ -519,12 +521,35 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 else { g.targetOffsetZ = targetForward; g.targetOffsetX = targetLateral; }
             } else if (returning) {
                 // 外側の通路を後退して元の列へ戻ってから横移動する。隊列を斜めに横切らない。
-                if (routeX) { g.targetOffsetX = 0; if (forward == 0) g.targetOffsetZ = 0; }
-                else { g.targetOffsetZ = 0; if (forward == 0) g.targetOffsetX = 0; }
+                if (g.flankClosing && std::abs(lateral - side) >= 0.001f) {
+                    if (routeX) g.targetOffsetZ = side; else g.targetOffsetX = side;
+                } else {
+                    g.flankClosing = false;
+                    if (routeX) { g.targetOffsetX = 0; if (forward == 0) g.targetOffsetZ = 0; }
+                    else { g.targetOffsetZ = 0; if (forward == 0) g.targetOffsetX = 0; }
+                }
             } else {
                 if (std::abs(lateral - side) < 0.001f) g.route = SmallGroupRoute::Forward;
                 if (routeX) { g.targetOffsetZ = side; if (g.route == SmallGroupRoute::Forward) g.targetOffsetX = g.routeForward; }
                 else { g.targetOffsetX = side; if (g.route == SmallGroupRoute::Forward) g.targetOffsetZ = g.routeForward; }
+                if (g.route == SmallGroupRoute::Forward && std::abs(forward - g.routeForward) < 0.001f) g.flankClosing = true;
+                if (g.flankClosing) {
+                    // 展開先からは索敵で選んだ敵へ接近する。通路が塞がれば毎刻み再評価する。
+                    if (g.attackTarget < 0 || g.awareness.cautious) { g.route = SmallGroupRoute::Returning; continue; }
+                    const auto q = positions[1-team][g.attackTarget];
+                    const float length = battleDistance(p, q);
+                    const auto profile = combatProfile(f.groupUnit(id));
+                    const Point target = length > profile.groupRange ? Point{q.x-(q.x-p.x)*profile.stopDistance/length,
+                        q.z-(q.z-p.z)*profile.stopDistance/length} : p;
+                    const float clearance = 4.5f + 3 * movementLimit * seconds;
+                    bool blocked = std::abs(target.x) > 76 || std::abs(target.z) > 76;
+                    for (unsigned otherTeam=0; otherTeam<2; ++otherTeam) for (unsigned other=0; other<25; ++other) {
+                        if ((otherTeam==team && other==id) || formations[otherTeam].organization.smallGroups[other].strength<=0) continue;
+                        if (segmentDistance(p,target,positions[otherTeam][other]) < clearance) blocked = true;
+                    }
+                    if (blocked) { g.combatWait = CombatWait::PathBlocked; continue; }
+                    g.targetOffsetX = g.offsetX + target.x-p.x; g.targetOffsetZ = g.offsetZ + target.z-p.z;
+                }
             }
             const float dx = g.targetOffsetX - g.offsetX, dz = g.targetOffsetZ - g.offsetZ;
             const float distance = std::hypot(dx, dz);
@@ -542,7 +567,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     if (otherTeam == team && other == id) continue;
                     if (formations[otherTeam].organization.smallGroups[other].strength <= 0) continue;
                     const auto q = positions[otherTeam][other];
-                    if (std::abs(next.x - q.x) < clearance && std::abs(next.z - q.z) < clearance) blocked = true;
+                    if (g.flankClosing ? segmentDistance(p,next,q) < clearance :
+                        (std::abs(next.x - q.x) < clearance && std::abs(next.z - q.z) < clearance)) blocked = true;
                 }
             if (blocked) continue;
             g.offsetX += dx / distance * travel; g.offsetZ += dz / distance * travel;

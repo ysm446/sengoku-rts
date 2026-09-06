@@ -17,6 +17,56 @@ std::unique_ptr<BattleSimulation> fixture(bool axis, float sign, unsigned team, 
 }
 int main() {
     try {
+        // 展開済みの両翼と中央の接触だけを残し、旧経路の終点からの接近を検証する。
+        for(bool axis:{false,true}) for(float sign:{-1.0f,1.0f}) for(unsigned team:{0u,1u}) for(unsigned lane:{0u,4u}) {
+            auto battle=fixture(axis,sign,team,0);
+            for(auto& f:battle->formations) for(auto& g:f.organization.smallGroups) g.offsetX=g.offsetZ=1000;
+            for(unsigned t=0;t<2;++t) {
+                auto& f=battle->formations[t];auto& anchor=f.organization.smallGroups[12];
+                const float forward=(t==team?-3.6f:3.6f)*sign;
+                anchor.offsetX=(axis?forward:0)-f.x;anchor.offsetZ=(axis?0:forward)-f.z;
+            }
+            auto& f=battle->formations[team];
+            const unsigned rank=sign>0?3:1, id=axis?lane*5+rank:rank*5+lane;
+            auto& g=f.organization.smallGroups[id];
+            g.route=SmallGroupRoute::Forward;g.routeAlongX=axis;g.routeForward=12*sign;
+            g.routeLateral=lane==0?-6.1f:6.1f;
+            g.offsetX=axis?g.routeForward:g.routeLateral;g.offsetZ=axis?g.routeLateral:g.routeForward;
+            const auto start=f.groupPosition(id);
+            auto obstructed=std::make_unique<BattleSimulation>(*battle);
+            auto& blocker=obstructed->formations[team].organization.smallGroups[6];
+            const auto target=obstructed->formations[1-team].groupPosition(12);
+            blocker.offsetX=(start.x+target.x)*.5f-f.x+5.2f;blocker.offsetZ=(start.z+target.z)*.5f-f.z+5.2f;
+            blocker.resting=true;blocker.fatigue=20;
+            obstructed->update(.2f);
+            require(battleDistance(start,obstructed->formations[team].groupPosition(id))<.001f,"Flank ignored a blocked approach");
+            blocker.offsetX=blocker.offsetZ=1000;obstructed->update(1);
+            require(battleDistance(start,obstructed->formations[team].groupPosition(id))>1,"Flank failed to resume after lane cleared");
+            auto held=std::make_unique<BattleSimulation>(*battle);held->hold(team);held->update(1);
+            require(battleDistance(start,held->formations[team].groupPosition(id))<.001f,"Held flank approached a target");
+            auto split=std::make_unique<BattleSimulation>(*battle);
+            battle->update(3);for(unsigned tick=0;tick<180;++tick)split->update(1.0f/60);
+            require(battleDistance(f.groupPosition(id),split->formations[team].groupPosition(id))<.001f &&
+                g.flankClosing==split->formations[team].organization.smallGroups[id].flankClosing,"Closing flank depends on update interval");
+            require(g.flankClosing && battleDistance(start,f.groupPosition(id))>4,"Flank stayed at its old endpoint");
+            auto lost=std::make_unique<BattleSimulation>(*battle);
+            for(auto& enemy:lost->formations[1-team].organization.smallGroups) enemy.offsetX+=1000;
+            lost->update(1.0f/60);
+            require(lost->formations[team].organization.smallGroups[id].route==SmallGroupRoute::Returning,"Flank pursued a lost target");
+            bool attacked=false;
+            for(unsigned tick=0;tick<300;++tick) {
+                battle->update(1.0f/60);attacked|=g.canAttack;
+                for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
+                    if(t==team && other==id)continue;
+                    require(battleDistance(f.groupPosition(id),battle->formations[t].groupPosition(other))>=4.5f,"Closing flank crossed another group");
+                }
+                if(attacked)break;
+            }
+            require(attacked,"Deployed flank never attacked its detected target");
+            g.fatigue=8;battle->update(1.0f/60);
+            require(g.route==SmallGroupRoute::Returning,"Tired closing flank did not return");
+            battle->reset();require(!battle->formations[team].organization.smallGroups[id].flankClosing,"Reset retained closing state");
+        }
         for(bool axis:{false,true}) for(float sign:{-1.0f,1.0f}) for(unsigned team:{0u,1u}) for(float stagger:{-12.0f,12.0f}) {
             auto battle=fixture(axis,sign,team,stagger);
             std::array<float,2> spread{};

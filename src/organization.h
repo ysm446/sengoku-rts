@@ -53,6 +53,7 @@ struct SmallGroup {
     bool routeAlongX = false;
     float routeForward = 0;
     float routeLateral = 0;
+    bool flankClosing = false;
     bool routed = false;
     float routShock = 0;
     // 敗走は命令移動から独立した世界座標で進める。
