@@ -163,7 +163,8 @@ struct WindowState {
         }
         return text + L" 兵力" + std::to_wstring(static_cast<int>(std::ceil(group.strength))) +
             L"/" + std::to_wstring(group.nominalStrength) + L" 士気" + std::to_wstring(static_cast<int>(group.morale)) +
-            L" 疲労" + std::to_wstring(static_cast<int>(group.fatigue));
+            L" 疲労" + std::to_wstring(static_cast<int>(group.fatigue)) +
+            L" 攻撃効率" + std::to_wstring(static_cast<int>(std::lround(group.attackEfficiency()*100))) + L"%";
     }
     bool rotating = false, inspectPlaying = false;
     bool orbitLeft = false, orbitRight = false;

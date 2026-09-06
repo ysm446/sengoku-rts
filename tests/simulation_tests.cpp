@@ -21,7 +21,7 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
             const auto& g = x.organization.smallGroups[id];
             const auto& h = y.organization.smallGroups[id];
             require(g.cavalry.phase==h.cavalry.phase && g.cavalry.handledCharge==h.cavalry.handledCharge &&
-                g.cavalry.blocked==h.cavalry.blocked && g.cavalry.destination.x==h.cavalry.destination.x &&
+                g.cavalry.blocked==h.cavalry.blocked && g.cavalry.blockedSeconds==h.cavalry.blockedSeconds && g.cavalry.destination.x==h.cavalry.destination.x &&
                 g.cavalry.destination.z==h.cavalry.destination.z,"Cavalry tactics depend on update interval");
             require(g.awareness.enemies == h.awareness.enemies && g.awareness.allies == h.awareness.allies &&
                 g.awareness.cautious == h.awareness.cautious && g.awareness.decision == h.awareness.decision &&

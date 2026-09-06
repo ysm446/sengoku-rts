@@ -103,6 +103,50 @@ int main() {
         require(diagonal->formations[0].organization.smallGroups[12].cavalry.phase==CavalryPhase::Disengaging &&
             std::abs(diagonal->formations[0].organization.smallGroups[12].cavalry.destination.z)>5,"Cavalry did not select an open diagonal retreat");
         auto withdrawing=afterCharge();withdrawing->update(1.0f/60);
+        auto rerouted=std::make_unique<BattleSimulation>(*withdrawing);
+        const auto originalGoal=rerouted->formations[0].organization.smallGroups[12].cavalry.destination;
+        placeSupport(*rerouted,-8,0);rerouted->update(.5f);
+        auto& rerouting=rerouted->formations[0].organization.smallGroups[12];
+        require(battleDistance(originalGoal,rerouting.cavalry.destination)<.001f,"Retreat switched before waiting for traffic");
+        rerouted->update(.5f);
+        require(battleDistance(originalGoal,rerouting.cavalry.destination)>5,"Blocked retreat never selected a new route");
+        bool arrived=false;
+        for(unsigned tick=0;tick<900 && !arrived;++tick) {
+            const auto old=rerouted->formations[0].groupPosition(12);
+            rerouted->update(1.0f/60);
+            const auto current=rerouted->formations[0].groupPosition(12);
+            require(battleDistance(old,current)<=4.0f/60+.001f,"Retreat replanning teleported cavalry");
+            require(battleDistance(current,rerouted->formations[0].groupPosition(13))>=4.5f,"Retreat replanning crossed its blocker");
+            arrived=rerouting.cavalry.phase==CavalryPhase::Regrouping;
+        }
+        require(arrived,"Replanned retreat did not reach regrouping point");
+        auto traffic=std::make_unique<BattleSimulation>(*withdrawing);
+        placeSupport(*traffic,-8,0);traffic->update(.4f);placeSupport(*traffic,-30,30);traffic->update(.5f);
+        const auto& clearTraffic=traffic->formations[0].organization.smallGroups[12];
+        require(battleDistance(originalGoal,clearTraffic.cavalry.destination)<.001f && clearTraffic.cavalry.blockedSeconds==0,
+            "Brief traffic unnecessarily changed the retreat route");
+        auto sealed=std::make_unique<BattleSimulation>(*withdrawing);
+        placeSupport(*sealed,-5,0);sealed->update(2);
+        const auto& sealedRider=sealed->formations[0].organization.smallGroups[12];
+        require(sealedRider.cavalry.blocked && sealedRider.cavalry.phase==CavalryPhase::Disengaging &&
+            battleDistance(originalGoal,sealedRider.cavalry.destination)<.001f,"Cavalry forced a route through sealed exits");
+        sealed->hold(0);sealed->update(1);
+        require(sealed->formations[0].organization.smallGroups[12].cavalry.blockedSeconds==0,"Hold retained retreat retry timer");
+        auto replanSlow=std::make_unique<BattleSimulation>(*withdrawing);placeSupport(*replanSlow,-8,0);
+        auto replanFast=std::make_unique<BattleSimulation>(*replanSlow),replanMirror=std::make_unique<BattleSimulation>(*replanSlow);
+        std::swap(replanMirror->formations[0],replanMirror->formations[1]);
+        replanSlow->update(8);replanMirror->update(8);for(unsigned tick=0;tick<480;++tick)replanFast->update(1.0f/60);
+        const auto& replanned=replanSlow->formations[0].organization.smallGroups[12];
+        for(const auto* actual:{&replanFast->formations[0].organization.smallGroups[12],&replanMirror->formations[1].organization.smallGroups[12]})
+            require(replanned.cavalry.destination.x==actual->cavalry.destination.x && replanned.cavalry.destination.z==actual->cavalry.destination.z &&
+                replanned.cavalry.blockedSeconds==actual->cavalry.blockedSeconds && replanned.approachX==actual->approachX &&
+                replanned.approachZ==actual->approachZ,"Retreat replanning depends on update interval or team");
+        auto lostDuringRetreat=std::make_unique<BattleSimulation>(*withdrawing);placeSupport(*lostDuringRetreat,-8,0);
+        for(auto& h:lostDuringRetreat->formations[1].organization.smallGroups)h.offsetX+=1000;
+        lostDuringRetreat->update(1);
+        require(lostDuringRetreat->formations[0].organization.smallGroups[12].attackTarget<0 &&
+            battleDistance(originalGoal,lostDuringRetreat->formations[0].organization.smallGroups[12].cavalry.destination)>5,
+            "Target loss prevented blocked retreat replanning");
         const auto withdrawStart=withdrawing->formations[0].groupPosition(12);
         withdrawing->update(.5f);
         require(battleDistance(withdrawStart,withdrawing->formations[0].groupPosition(12))<.001f,"Cavalry slid before turning away");

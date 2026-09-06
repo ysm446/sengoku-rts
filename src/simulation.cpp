@@ -136,8 +136,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
         const bool contact = f.state == FormationState::Engaged && enemy.state == FormationState::Engaged;
         for (auto& g : f.organization.smallGroups) {
             if (g.routed) continue;
-            if (g.state == SmallGroupState::Engaged) g.fatigue = std::min(30.0f, g.fatigue + seconds);
-            else if (g.route == SmallGroupRoute::None) g.fatigue = std::max(0.0f, g.fatigue - seconds * 0.5f);
+            if (!g.resting && g.cavalry.phase==CavalryPhase::None && g.state == SmallGroupState::Engaged)
+                g.fatigue = std::min(30.0f, g.fatigue + seconds);
             if (g.route != SmallGroupRoute::None && g.route != SmallGroupRoute::ReliefReserve && g.route != SmallGroupRoute::ReliefWithdraw && g.route != SmallGroupRoute::ReliefCorridor &&
                 (!contact || g.fatigue >= 8 || g.strength <= g.nominalStrength * 0.5f || g.morale <= 30 ||
                 (g.flankClosing && (g.attackTarget < 0 || g.awareness.cautious)) ||
@@ -423,6 +423,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     const Point next{p.x+(target.x-p.x)*travel/distance,p.z+(target.z-p.z)*travel/distance};
                     blocked |= reservedForCentralRelief(id,next);
                     g.cavalry.blocked = blocked;
+                    g.cavalry.blockedSeconds = blocked ? g.cavalry.blockedSeconds+seconds : 0;
                     if (blocked) { g.approachSpeed=0; g.combatWait=CombatWait::PathBlocked; continue; }
                     if (travel>0) { g.approachX+=next.x-p.x;g.approachZ+=next.z-p.z;g.state=SmallGroupState::Retreating; }
                     continue;
@@ -872,14 +873,15 @@ void BattleSimulation::step(float seconds) {
             const float defense = (std::cos(victim.heading) * (p.x - targetPoint.x) + std::sin(victim.heading) * (p.z - targetPoint.z)) / targetDistance;
             const float directionBonus = defense < -0.5f ? 1.5f : defense < 0.5f ? 1.25f : 1.0f;
             float strike = combatProfile(f.groupUnit(id)).damagePerSecond * (fighters / 5) * (0.5f + f.cohesion / 200) *
-                (0.5f + g.morale / 200) * directionBonus * seconds;
+                (0.5f + g.morale / 200) * directionBonus * seconds * g.attackEfficiency();
             damage[1-team][target] += strike;
             bool chargeImpact = false;
             if (f.groupUnit(id) == UnitType::Cavalry && g.chargeWindow > 0 && f.maneuverEnabled &&
                 !g.resting && !g.routed && g.route == SmallGroupRoute::None && g.morale > 40) {
                 const bool braced = formations[1-team].groupUnit(target) == UnitType::Spearman && defense >= .5f && victim.morale > 40;
-                strike += fighters * .4f * (braced ? .15f : 1.0f);
-                damage[1-team][target] += fighters * .4f * (braced ? .15f : 1.0f);
+                const float chargeDamage = fighters * .4f * (braced ? .15f : 1.0f) * g.attackEfficiency();
+                strike += chargeDamage;
+                damage[1-team][target] += chargeDamage;
                 chargeImpact = true;
                 charged = true;
             }
@@ -893,6 +895,7 @@ void BattleSimulation::step(float seconds) {
         g.canAttack = g.activeFighters > 0;
         if (charged) {
             ++g.charges; g.lastCharge = time; g.chargeWindow = 0;
+            g.fatigue = std::min(30.0f,g.fatigue+2);
         }
         g.combatWait = CombatWait::None;
     }
@@ -937,27 +940,40 @@ void BattleSimulation::updateCavalryTactics(float seconds) {
             tactic={};tactic.handledCharge=g.charges;continue;
         }
         const auto p=f.groupPosition(id);
-        if (tactic.phase==CavalryPhase::Disengaging) {
-            if (battleDistance(p,tactic.destination)<.001f) { tactic.phase=CavalryPhase::Regrouping;g.approachSpeed=0;tactic.blocked=false; }
-            continue;
+        const bool replanning=tactic.phase==CavalryPhase::Disengaging;
+        if (replanning) {
+            if (battleDistance(p,tactic.destination)<.001f) {
+                tactic.phase=CavalryPhase::Regrouping;g.approachSpeed=0;tactic.blocked=false;tactic.blockedSeconds=0;continue;
+            }
+            // 一時的な通過は待ち、閉塞が続くときだけ退路を選び直す。
+            if (!tactic.blocked || tactic.blockedSeconds<.75f) continue;
+            tactic.blockedSeconds=0;
         }
         if (tactic.phase==CavalryPhase::Regrouping) {
             if (g.attackTarget<0 || (g.chargeCooldown==0 && g.morale>=60 &&
                 g.strength>g.nominalStrength*.5f && !g.awareness.cautious)) tactic.phase=CavalryPhase::None;
             continue;
         }
-        tactic.blocked=false;
-        if (g.charges<=tactic.handledCharge || time-g.lastCharge<1 || g.attackTarget<0) continue;
-        const auto& enemy=formations[1-team];const auto& h=enemy.organization.smallGroups[g.attackTarget];
-        const auto q=enemy.groupPosition(g.attackTarget);
+        if (!replanning) {
+            tactic.blocked=false;
+            if (g.charges<=tactic.handledCharge || time-g.lastCharge<1 || g.attackTarget<0) continue;
+            const auto& enemy=formations[1-team];const auto& h=enemy.organization.smallGroups[g.attackTarget];
+            const auto q=enemy.groupPosition(g.attackTarget);
+            const float distance=battleDistance(p,q);
+            if (distance<.001f) continue;
+            const float facing=((p.x-q.x)*std::cos(h.heading)+(p.z-q.z)*std::sin(h.heading))/distance;
+            const bool spear=enemy.groupUnit(g.attackTarget)==UnitType::Spearman && facing>=.5f && h.morale>40;
+            const bool supported=g.awareness.allies>0 && g.awareness.alliedStrength>=g.awareness.enemyStrength*1.25f;
+            const bool vulnerable=enemy.groupUnit(g.attackTarget)==UnitType::Archer || h.morale<40 || h.strength<h.nominalStrength*.5f;
+            if (!spear && !g.awareness.cautious && (supported || vulnerable)) { tactic.handledCharge=g.charges;continue; }
+        }
+        // 目標喪失後も、既に選んだ退路の方向を基準に離脱を続ける。
+        const auto q=g.attackTarget>=0 ? formations[1-team].groupPosition(g.attackTarget) :
+            BattlePoint{2*p.x-tactic.destination.x,2*p.z-tactic.destination.z};
         const float distance=battleDistance(p,q);
         if (distance<.001f) continue;
-        const float facing=((p.x-q.x)*std::cos(h.heading)+(p.z-q.z)*std::sin(h.heading))/distance;
-        const bool spear=enemy.groupUnit(g.attackTarget)==UnitType::Spearman && facing>=.5f && h.morale>40;
-        const bool supported=g.awareness.allies>0 && g.awareness.alliedStrength>=g.awareness.enemyStrength*1.25f;
-        const bool vulnerable=enemy.groupUnit(g.attackTarget)==UnitType::Archer || h.morale<40 || h.strength<h.nominalStrength*.5f;
-        if (!spear && !g.awareness.cautious && (supported || vulnerable)) { tactic.handledCharge=g.charges;continue; }
         const float dx=(p.x-q.x)/distance,dz=(p.z-q.z)/distance;
+        bool found=false;
         // 真後ろを優先し、塞がれているときは左右45度の退路を試す。
         for (float angle:{0.0f,.785398163f,-.785398163f}) {
             const BattlePoint destination{p.x+10*(dx*std::cos(angle)-dz*std::sin(angle)),
@@ -972,9 +988,10 @@ void BattleSimulation::updateCavalryTactics(float seconds) {
             }
             if (!clear) continue;
             tactic.phase=CavalryPhase::Disengaging;tactic.destination=destination;tactic.handledCharge=g.charges;
+            tactic.blockedSeconds=0;found=true;
             g.approachSpeed=g.chargeDistance=g.chargeWindow=0;g.detourTarget=-1;break;
         }
-        tactic.blocked=tactic.phase==CavalryPhase::None;
+        tactic.blocked=!found;
     }
 }
 void BattleSimulation::updateDecisions() {
@@ -1074,9 +1091,10 @@ void BattleSimulation::updateArrows(float seconds, std::array<std::array<float, 
         if (group.shotCooldown > 0) continue;
         const float shooters = std::min(BowProfile::maxShooters, group.strength);
         arrow.duration = distance / BowProfile::arrowSpeed;
-        arrow.damage = shooters * BowProfile::damagePerShooter * (.5f + group.morale / 200);
+        arrow.damage = shooters * BowProfile::damagePerShooter * (.5f + group.morale / 200) * group.attackEfficiency();
         arrows.push_back(arrow); ++volleysFired;
         group.lastShot = time; group.shotCooldown = BowProfile::interval;
+        group.fatigue = std::min(30.0f,group.fatigue+2);
         group.activeFighters = shooters; group.activeOpponents[group.attackTarget] = shooters; group.canAttack = true;
     }
 }
@@ -1125,14 +1143,18 @@ void BattleSimulation::updateRouts(float seconds) {
             if (g.routed) continue;
             // 同時に複数小組が崩れても、一瞬で周囲の士気を使い切らない。
             g.morale = std::max(0.0f, g.morale - std::min(nearbyCounts[id], 1u) * 6.0f * seconds);
-            if (g.resting || g.cavalry.phase==CavalryPhase::Regrouping) {
+            const bool resting = g.resting || g.cavalry.phase==CavalryPhase::Regrouping;
+            const bool idle = !f.moving && g.state==SmallGroupState::Waiting && g.route==SmallGroupRoute::None &&
+                g.cavalry.phase==CavalryPhase::None && !g.canAttack &&
+                (f.groupUnit(id)!=UnitType::Archer || g.attackTarget<0);
+            if (resting || idle) {
                 bool safe = nearbyCounts[id] == 0 && time - g.lastDamageTime >= 3;
                 for (unsigned other = 0; other < 25 && safe; ++other)
                     if (!enemy.organization.smallGroups[other].routed && enemy.organization.smallGroups[other].strength > 0 &&
                         battleDistance(f.groupPosition(id), enemy.groupPosition(other)) < 10) safe = false;
                 if (safe) {
-                    g.morale = std::min(100.0f, g.morale + 3 * seconds);
-                    g.fatigue = std::max(0.0f, g.fatigue - seconds);
+                    if (resting) g.morale = std::min(100.0f, g.morale + 3 * seconds);
+                    g.fatigue = std::max(0.0f, g.fatigue - seconds * (resting ? 1.0f : .5f));
                     if (g.morale >= 70 && g.fatigue <= 2) g.resting = false;
                 }
             }

@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <algorithm>
 #include "contact_fronts.h"
 #include "unit_type.h"
 #include <optional>
@@ -15,6 +16,7 @@ struct CavalryTactics {
     BattlePoint destination{};
     unsigned handledCharge = 0;
     bool blocked = false;
+    float blockedSeconds = 0;
 };
 struct TacticalAwareness {
     unsigned enemies = 0, allies = 0;
@@ -34,6 +36,7 @@ struct SmallGroup {
     float offsetX = 0, offsetZ = 0;
     float targetOffsetX = 0, targetOffsetZ = 0;
     float fatigue = 0;
+    float attackEfficiency() const { return 1.0f - .02f * std::clamp(fatigue, 0.0f, 20.0f); }
     bool resting = false;
     double lastDamageTime = -10;
     float heading = 0;
