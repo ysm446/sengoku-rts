@@ -127,6 +127,13 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     };
     const DirectX::XMFLOAT3 white{1, 1, 1};
     if (options.inspect) {
+        if (options.formationPreview) {
+            scene.soldierCount = FormationDrill::count;
+            scene.sprites.resize(FormationDrill::count * 2 + 16);
+            FormationDrill drill; drill.reset(options.unit);
+            updateDrillSprites(scene, drill, Camera{});
+            return scene;
+        }
         // Cameraの横方向へ8方向を並べる。左右が方向番号順になる。
         for (unsigned team = 0; team < 2; ++team) for (unsigned direction = 0; direction < 8; ++direction) {
             const float horizontal = (static_cast<float>(direction) - 3.5f) * 2.8f;
@@ -170,6 +177,25 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     scene.routMarkerStart = scene.sprites.size();
     for (unsigned i = 0; i < Scene::routMarkerCount; ++i) add(0, 0, 0.5f, 0.5f, 13, white);
     return scene;
+}
+
+void updateDrillSprites(Scene& scene, const FormationDrill& drill, const Camera& camera) {
+    const auto& visual = unitVisual(drill.unit);
+    for(unsigned i=0;i<FormationDrill::count;++i) {
+        const auto& soldier=drill.soldiers[i];
+        const unsigned frame=scene.animatedSoldiers && soldier.moving ? 1+static_cast<unsigned>(soldier.animationTime*8)%8 : 0;
+        auto& sprite=scene.sprites[i];
+        sprite={{soldier.x,terrainHeight(soldier.x,soldier.z)+.03f,soldier.z},{visual.idleSize,visual.idleSize},
+            scene.generatedSoldiers?4+camera.spriteDirection(soldier.heading)+frame*12:0,{.85f,.34f,.25f},{},{},scene.generatedSoldiers?visual.idlePivot:0};
+        const auto goal=drill.slot(i);
+        scene.sprites[FormationDrill::count+i]={{goal[0],terrainHeight(goal[0],goal[1])+.06f,goal[1]},
+            {.45f,.45f},12,{.9f,.9f,.65f},{1,0,0},{0,0,1}};
+    }
+    for(unsigned i=0;i<16;++i) {
+        const float angle=DirectX::XM_2PI*i/16;
+        const float x=drill.targetX+std::cos(angle),z=drill.targetZ+std::sin(angle);
+        scene.sprites[FormationDrill::count*2+i]={{x,terrainHeight(x,z)+.08f,z},{.55f,.55f},12,{.35f,.85f,1},{1,0,0},{0,0,1}};
+    }
 }
 
 std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& camera,

@@ -43,6 +43,8 @@ struct WindowState {
     bool inspect = false, placeholder = false, sceneDirty = false, inspectAttack = false;
     unsigned direction = 0;
     UnitType unit = UnitType::Spearman;
+    bool drillEnabled = false;
+    FormationDrill drill;
     BattleSimulation simulation;
     const Scene* scene = nullptr;
     int selected = -1;
@@ -53,6 +55,11 @@ struct WindowState {
     bool audioSaveFailed = false;
     BattleAudio* audio = nullptr;
     void click(int x, int y, bool move) {
+        if (drillEnabled && move && scene && !rotating) {
+            const auto point=pickTerrain(*scene,camera,static_cast<float>(x),static_cast<float>(y),width,height);
+            if(point)drill.move(point->x,point->z);
+            return;
+        }
         if (inspect || rotating || !scene) return;
         const auto point = pickTerrain(*scene, camera, static_cast<float>(x), static_cast<float>(y), width, height);
         if (move) {
@@ -145,7 +152,7 @@ struct WindowState {
     bool orbitLeft = false, orbitRight = false;
     int dragX = 0;
     double inspectTime = 0;
-    void resetCamera() { camera = Camera{}; if (inspect) camera.span = 26; }
+    void resetCamera() { camera = Camera{}; if (inspect) camera.span = drillEnabled ? 60.0f : 26.0f; }
     void updateOrbit(float seconds) {
         const float axis = static_cast<float>(orbitRight) - static_cast<float>(orbitLeft);
         camera.rotate(axis * DirectX::XM_PIDIV2 * seconds);
@@ -215,10 +222,15 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 if (wparam == 'M') { state->muted = !state->muted; if (state->muted && state->audio) state->audio->silence(); }
                 if (wparam == 'H' && !state->inspect && state->selected >= 0)
                     state->simulation.hold(static_cast<unsigned>(state->selected));
-                if (wparam == VK_F2) { state->inspect = !state->inspect; state->resetCamera(); state->sceneDirty = true; }
+                if (wparam == VK_F2) { state->inspect = !state->inspect; state->drillEnabled=false; state->resetCamera(); state->sceneDirty = true; }
+                if (wparam == VK_F6 && state->inspect) {
+                    state->drillEnabled=!state->drillEnabled;state->drill.reset(state->unit);state->resetCamera();state->sceneDirty=true;
+                }
+                if (wparam == 'H' && state->drillEnabled) state->drill.hold();
                 if (wparam == VK_F3 && state->inspect) { state->inspectAttack = !state->inspectAttack; state->sceneDirty = true; }
                 if (wparam == VK_F4 && state->inspect) {
                     state->unit = static_cast<UnitType>((static_cast<unsigned>(state->unit) + 1) % unitVisuals.size());
+                    state->drill.reset(state->unit);
                     state->sceneDirty = true;
                 }
                 if (wparam == 'V') { state->placeholder = !state->placeholder; state->sceneDirty = true; }
@@ -227,12 +239,14 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     state->sceneDirty = true;
                 }
                 if (wparam == VK_SPACE) {
-                    if (state->inspect) state->inspectPlaying = !state->inspectPlaying;
+                    if (state->drillEnabled) state->drill.running=!state->drill.running;
+                    else if (state->inspect) state->inspectPlaying = !state->inspectPlaying;
                     else state->simulation.toggle();
                 }
                 if (wparam == VK_HOME) {
                     state->selected = state->selectedGroup = -1;
                     state->simulation.reset(); state->inspectTime = 0; state->inspectPlaying = false;
+                    state->drill.reset(state->unit);
                 }
             }
             return 0;
@@ -248,6 +262,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 
 struct Options {
+    bool formationPreview = false;
     UnitType unit = UnitType::Spearman;
     bool historical = false;
     bool smoke = false, warp = false, inspect = false, placeholder = false;
@@ -268,6 +283,7 @@ Options parseOptions() {
             if (arg == L"--smoke-test") options.smoke = true;
             else if (arg == L"--sekigahara") options.historical = true;
             else if (arg == L"--battle") options.historical = false;
+            else if (arg == L"--formation") {options.formationPreview=true;options.inspect=true;}
             else if (arg == L"--unit" && i + 1 < count) {
                 const std::wstring value = args[++i];
                 bool found = false;
@@ -329,6 +345,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             state.audioSettingsPath = executableDirectory() / L"audio-settings.txt";
             state.audioSettings.load(state.audioSettingsPath);
         }
+        state.drillEnabled=options.formationPreview;state.drill.reset(state.unit);state.drill.running=options.march;
         state.inspect = options.inspect; state.placeholder = options.placeholder; state.resetCamera();
         state.inspectAttack = options.inspectAttack;
         state.camera.rotate(DirectX::XMConvertToRadians(options.yawDegrees));
@@ -366,6 +383,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         bool generatedSoldiers = false;
         const auto rebuildScene = [&] {
             SceneOptions sceneOptions;
+            sceneOptions.formationPreview=state.drillEnabled;
             sceneOptions.unit = state.inspect ? state.unit : UnitType::Spearman;
             const std::wstring prefix = unitVisual(sceneOptions.unit).assetPrefix;
             const auto assetDirectory = executableDirectory() / L"assets/sprites";
@@ -399,6 +417,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 if (activeScene.unit != state.unit || !activeScene.attackSoldiers) throw std::runtime_error("Unit assets failed to load");
             }
             if (state.unit != original) throw std::runtime_error("Unit cycle did not return to the original");
+            state.drill.running=options.march;
         }
         if ((options.combatTest || options.inspectAttack) && !options.placeholder && !activeScene.attackSoldiers)
             throw std::runtime_error("Attack sprite sheet is required for this test");
@@ -439,11 +458,26 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         }
         if (options.motionTest && !options.placeholder && !activeScene.animatedSoldiers)
             throw std::runtime_error("Motion test requires the packaged idle and walk sprite sheets");
+        if (options.smoke && options.formationPreview) {
+            const auto projected=DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(12,terrainHeight(12,4),4,1),
+                state.camera.matrix(static_cast<float>(state.width)/state.height));
+            const int px=static_cast<int>((DirectX::XMVectorGetX(projected)+1)*state.width*.5f);
+            const int py=static_cast<int>((1-DirectX::XMVectorGetY(projected))*state.height*.5f);
+            SendMessageW(window,WM_RBUTTONDOWN,0,MAKELPARAM(px,py));
+            if(std::hypot(state.drill.targetX-12,state.drill.targetZ-4)>.2f)throw std::runtime_error("Drill mouse order failed");
+            SendMessageW(window,WM_KEYDOWN,'H',0);
+            if(state.drill.targetX!=state.drill.x || state.drill.targetZ!=state.drill.z)throw std::runtime_error("Drill hold failed");
+            SendMessageW(window,WM_KEYDOWN,VK_HOME,0);
+            if(state.drill.running || state.drill.targetZ!=18)throw std::runtime_error("Drill reset failed");
+            SendMessageW(window,WM_KEYDOWN,VK_SPACE,0);
+            if(!state.drill.running)throw std::runtime_error("Drill play failed");
+            state.drill.running=options.march;
+        }
         if (!options.smoke) ShowWindow(window, show);
         auto previous = std::chrono::steady_clock::now();
         double titleSeconds = 0; unsigned titleFrames = 0, frame = 0;
         bool running = true;
-        const unsigned smokeFrames = options.combatTest ? 80 : options.motionTest ? 16 : 5;
+        const unsigned smokeFrames = options.combatTest || options.formationPreview ? 80 : options.motionTest ? 16 : 5;
         bool observedCombat = false, observedRetreat = false;
         bool observedAttack = false;
         bool observedFrontRelief = false;
@@ -521,9 +555,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                     const float targetYaw = Camera::initialYaw + static_cast<float>(frame) * DirectX::XM_PIDIV4;
                     state.camera.rotate(targetYaw - state.camera.yaw);
                 }
+                if(options.formationPreview && frame==32)state.drill.move(15,8);
             }
             const float simulationDt = options.combatTest ? 1.0f : options.smoke ? 0.125f : dt;
-            if (state.inspect) {
+            if (state.drillEnabled) state.drill.update(simulationDt);
+            else if (state.inspect) {
                 if (state.inspectPlaying) state.inspectTime += simulationDt;
             } else if (options.combatTest) {
                 // 描画間にも個体状態を更新し、接敵・補充・攻撃を通常実行に近い間隔で確認する。
@@ -547,7 +583,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 }
             auto visualSimulation = state.simulation;
             if (state.inspect) visualSimulation.time = state.inspectTime;
-            updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected, state.selectedGroup);
+            if(state.drillEnabled) updateDrillSprites(activeScene,state.drill,state.camera);
+            else updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected, state.selectedGroup);
             const bool audible = !state.muted && !state.inspect && GetForegroundWindow() == window && state.simulation.running;
             const auto impacts = impactTracker.update(*activeScene.individuals, audible);
             if (!audible) audio.silence();
@@ -557,7 +594,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             renderer.updateSprites(activeScene.sprites);
             renderer.resize(state.width, state.height);
             const bool captureNow = !options.capture.empty() && (options.smoke ? frame == smokeFrames - 1 : frame == 0);
-            const auto capturePath = options.combatTest && frame == routCaptureFrame ?
+            const auto capturePath = options.formationPreview && frame==48 ?
+                std::filesystem::path(options.capture.wstring()+L".turn.bmp") : options.combatTest && frame == routCaptureFrame ?
                 std::filesystem::path(options.capture.wstring() + L".rout.bmp") : options.combatTest && frame == 19 ?
                 std::filesystem::path(options.capture.wstring() + L".engaged.bmp") : captureNow ? options.capture : std::filesystem::path{};
             renderer.render(state.camera, capturePath);
@@ -576,8 +614,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                         state.audioSettings.selected == AudioBus::Environment ? L"環境 " : L"効果音 ") +
                     std::to_wstring(state.audioSettings.percent[static_cast<unsigned>(state.audioSettings.selected)]) + L"%]" +
                     (state.audioSaveFailed ? L" 音量保存失敗" : L"") +
-                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 M:消音 F5:音量対象 +/-:調整";
-                SetWindowTextW(window, title.c_str()); titleSeconds = 0; titleFrames = 0;
+                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 M:消音 F5:音量対象 +/-:調整";
+                const auto drillTitle=std::wstring(L"隊列確認 | ")+unitVisual(state.unit).name+
+                    (state.drill.running?L" 進行中":L" 一時停止")+L" | 4列×6段・24体 | 隊列ずれ "+std::to_wstring(state.drill.error())+
+                    L" | 右クリック:移動 Space:再生/停止 H:その場で整列 Home:初期化 F4:兵種 F6:素材へ | 黄点:持ち場 水色:目的地";
+                SetWindowTextW(window, state.drillEnabled?drillTitle.c_str():title.c_str()); titleSeconds = 0; titleFrames = 0;
             }
             if (options.smoke && frame >= smokeFrames) break;
         }

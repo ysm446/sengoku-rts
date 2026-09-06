@@ -2,6 +2,7 @@
 #include "camera.h"
 #include "simulation.h"
 #include "unit_type.h"
+#include "formation_drill.h"
 #include <DirectXMath.h>
 #include <cstdint>
 #include <filesystem>
@@ -87,6 +88,7 @@ struct Scene {
 };
 
 struct SceneOptions {
+    bool formationPreview = false;
     UnitType unit = UnitType::Spearman;
     std::filesystem::path soldierSheet;
     std::filesystem::path walkSheet;
@@ -99,5 +101,6 @@ struct SceneOptions {
 float terrainHeight(float x, float z);
 Scene makeScene(unsigned soldiers = 1000, const SceneOptions& options = {});
 void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected = -1, int selectedGroup = -1);
+void updateDrillSprites(Scene& scene, const FormationDrill& drill, const Camera& camera);
 std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& camera,
     float pixelX, float pixelY, unsigned width, unsigned height);
