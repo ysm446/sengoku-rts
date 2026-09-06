@@ -1,4 +1,5 @@
 #include "scene.h"
+#include "battle_clock.h"
 #include <stdexcept>
 #include <iostream>
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
@@ -57,6 +58,58 @@ int main() {
         camera.x = -20;
         updateSceneSprites(scene, battle, camera, -1, -1, 2);
         require(scene.sprites[scene.emotionStart + 49].tile == 26, "Panning did not restore active notification");
+        // タイルの投影サイズはズーム・縦横比・解像度によらず64px。
+        for (const float span : {24.0f, 96.0f, 160.0f}) for (const unsigned height : {640u, 1080u, 2160u})
+            for (const float aspect : {.5f, 16.0f / 9, 2.0f}) {
+                camera.span = span;
+                updateSceneSprites(scene, battle, camera, -1, -1, aspect, height);
+                const auto& bubble = scene.sprites[scene.emotionStart + 49];
+                const auto center = DirectX::XMLoadFloat3(&bubble.position);
+                const auto right = camera.right();
+                const auto offset = DirectX::XMVectorScale(DirectX::XMLoadFloat3(&right), bubble.size.x * .5f);
+                const auto matrix = camera.matrix(aspect);
+                const auto left = DirectX::XMVector3TransformCoord(DirectX::XMVectorSubtract(center, offset), matrix);
+                const auto edge = DirectX::XMVector3TransformCoord(DirectX::XMVectorAdd(center, offset), matrix);
+                const float pixels = std::abs(DirectX::XMVectorGetX(edge) - DirectX::XMVectorGetX(left)) * height * aspect * .5f;
+                require(bubble.tile == 26 && std::abs(pixels - 64) < .01f, "Bubble changed pixel size across viewports");
+            }
+        auto& neighbor = battle.formations[1].organization.smallGroups[23];
+        neighbor.fleeX = onScreen.fleeX;
+        camera.span = 96;
+        const float unitsPerPixel = camera.span / 1920;
+        neighbor.fleeZ = 66 * unitsPerPixel;
+        updateSceneSprites(scene, battle, camera);
+        require(scene.sprites[scene.emotionStart + 48].tile == 26 && scene.sprites[scene.emotionStart + 49].tile == 13,
+            "Nearby bubbles lost pixel spacing");
+        neighbor.fleeZ = 70 * unitsPerPixel;
+        updateSceneSprites(scene, battle, camera);
+        require(scene.sprites[scene.emotionStart + 49].tile == 26, "Separated bubbles were suppressed");
+        auto recoveryBattle = [] {
+            BattleSimulation b;
+            b.hold(0); b.hold(1); b.running = true;
+            auto& group = b.formations[0].organization.smallGroups[0];
+            group.resting = true; group.morale = 70; group.fatigue = 0;
+            return b;
+        };
+        auto slow = recoveryBattle(), fast = recoveryBattle();
+        SoldierVisuals slowVisuals, fastVisuals;
+        EmotionSignals slowSignals, fastSignals;
+        BattleClock slowClock, fastClock;
+        slowClock.advance(slow, slowVisuals, 1, &slowSignals);
+        for (unsigned frame = 0; frame < 144; ++frame)
+            fastClock.advance(fast, fastVisuals, 1.0 / 144, &fastSignals);
+        require(slowSignals.signals[0].visible == Emotion::Motivation, "Recovery between draws was lost");
+        require(slowSignals.signals[0].until < 2.6, "Notification time followed drawing instead of fixed steps");
+        for (unsigned i = 0; i < 50; ++i) {
+            const auto& a = slowSignals.signals[i]; const auto& b = fastSignals.signals[i];
+            require(a.visible == b.visible && a.state == b.state && a.until == b.until && a.cooldown == b.cooldown,
+                "Emotion timing depends on rendering frequency");
+        }
+        slow.running = false;
+        slowClock.advance(slow, slowVisuals, 10, &slowSignals);
+        require(slowSignals.signals[0].visible == Emotion::Motivation, "Paused fixed clock expired notification");
+        slow.reset(); slowClock.advance(slow, slowVisuals, 0, &slowSignals);
+        require(slowSignals.signals[0].visible == Emotion::None, "Clock reset retained notification");
         std::cout << "Emotion transitions and scene integration passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

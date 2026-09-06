@@ -424,8 +424,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             sceneOptions.inspect = state.inspect; sceneOptions.directionOffset = state.inspect ? state.direction : 0;
             sceneOptions.inspectAttack = state.inspectAttack;
             auto individuals = activeScene.individuals;
+            auto emotions = activeScene.emotions;
             activeScene = makeScene(state.requestedSoldiers, sceneOptions);
             activeScene.individuals = std::move(individuals);
+            activeScene.emotions = std::move(emotions);
             displayedSoldiers = activeScene.soldierCount; generatedSoldiers = activeScene.generatedSoldiers;
             renderer.setScene(activeScene); state.sceneDirty = false; requestedSoldiers = state.requestedSoldiers;
         };
@@ -435,7 +437,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             SendMessageW(window, WM_KEYDOWN, VK_HOME, 0);
             rebuildScene();
             state.simulation.running = options.march;
-            updateSceneSprites(activeScene, state.simulation, state.camera, -1, -1, static_cast<float>(state.width) / state.height);
+            updateSceneSprites(activeScene, state.simulation, state.camera, -1, -1, static_cast<float>(state.width) / state.height, state.height);
             unsigned spears = 0, swords = 0, archers = 0;
             for (const auto& binding : activeScene.soldierBindings) {
                 const auto tile = activeScene.sprites[binding.spriteIndex].tile;
@@ -611,13 +613,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             } else if (options.combatTest) {
                 // 描画間にも個体状態を更新し、接敵・補充・攻撃を通常実行に近い間隔で確認する。
                 for (unsigned step = 0; step < 10; ++step) {
-                    state.battleClock.advance(state.simulation, *activeScene.individuals, 0.1f);
-                    updateSceneSprites(activeScene, state.simulation, state.camera, state.selected, state.selectedGroup, static_cast<float>(state.width) / state.height);
+                    state.battleClock.advance(state.simulation, *activeScene.individuals, 0.1f, &activeScene.emotions);
+                    updateSceneSprites(activeScene, state.simulation, state.camera, state.selected, state.selectedGroup, static_cast<float>(state.width) / state.height, state.height);
                     observedRetreat |= state.simulation.formations[0].defeated() || state.simulation.formations[1].defeated();
                     for (const auto& f : state.simulation.formations) for (unsigned id = 0; id < 25; ++id)
                         observedFrontRelief |= f.organization.smallGroups[id].slot != id;
                 }
-            } else state.battleClock.advance(state.simulation, *activeScene.individuals, simulationDt);
+            } else state.battleClock.advance(state.simulation, *activeScene.individuals, simulationDt, &activeScene.emotions);
             observedCombat |= state.simulation.formations[0].state == FormationState::Engaged;
             observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
             if (options.combatTest && !observedLocalRout && state.simulation.result == BattleResult::Ongoing)
@@ -631,7 +633,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             auto visualSimulation = state.simulation;
             if (state.inspect) visualSimulation.time = state.inspectTime;
             if(state.drillEnabled) updateDrillSprites(activeScene,state.drill,state.camera);
-            else updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected, state.selectedGroup, static_cast<float>(state.width) / state.height);
+            else updateSceneSprites(activeScene, visualSimulation, state.camera, state.selected, state.selectedGroup, static_cast<float>(state.width) / state.height, state.height);
             const bool audible = !state.muted && !state.inspect && GetForegroundWindow() == window && state.simulation.running;
             const auto impacts = impactTracker.update(*activeScene.individuals, audible);
             if (!audible) audio.silence();

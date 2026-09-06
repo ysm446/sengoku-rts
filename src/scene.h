@@ -113,7 +113,7 @@ struct SceneOptions {
 
 float terrainHeight(float x, float z);
 Scene makeScene(unsigned soldiers = 1000, const SceneOptions& options = {});
-void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected = -1, int selectedGroup = -1, float aspect = 16.0f / 9);
+void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const Camera& camera, int selected = -1, int selectedGroup = -1, float aspect = 16.0f / 9, unsigned viewportHeight = 1080);
 void updateDrillSprites(Scene& scene, const FormationDrill& drill, const Camera& camera);
 std::optional<DirectX::XMFLOAT3> pickTerrain(const Scene& scene, const Camera& camera,
     float pixelX, float pixelY, unsigned width, unsigned height);

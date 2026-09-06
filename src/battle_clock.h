@@ -5,14 +5,16 @@
 class BattleClock {
 public:
     static constexpr double interval = 1.0 / 30;
-    void advance(BattleSimulation& battle, SoldierVisuals& visuals, double seconds) {
+    void advance(BattleSimulation& battle, SoldierVisuals& visuals, double seconds, EmotionSignals* emotions = nullptr) {
         if (generation != battle.generation) { generation = battle.generation; remainder = 0; }
         visuals.update(battle);
+        if (emotions) emotions->update(battle);
         if (!battle.running || !std::isfinite(seconds) || seconds <= 0) return;
         remainder += seconds;
         while (remainder + 1e-8 >= interval) {
             battle.update(static_cast<float>(interval));
             visuals.update(battle);
+            if (emotions) emotions->update(battle);
             remainder -= interval;
         }
     }
