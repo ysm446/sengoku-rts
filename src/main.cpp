@@ -227,6 +227,11 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     state->drillEnabled=!state->drillEnabled;state->drill.reset(state->unit);state->resetCamera();state->sceneDirty=true;
                 }
                 if (wparam == 'H' && state->drillEnabled) state->drill.hold();
+                if(wparam==VK_F7){
+                    state->unit=UnitType::Samurai;state->inspect=false;state->drillEnabled=false;
+                    state->simulation.reset(UnitType::Samurai);state->selected=state->selectedGroup=-1;
+                    state->resetCamera();state->sceneDirty=true;
+                }
                 if (wparam == VK_F3 && state->inspect) { state->inspectAttack = !state->inspectAttack; state->sceneDirty = true; }
                 if (wparam == VK_F4 && state->inspect) {
                     state->unit = static_cast<UnitType>((static_cast<unsigned>(state->unit) + 1) % unitVisuals.size());
@@ -245,7 +250,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 }
                 if (wparam == VK_HOME) {
                     state->selected = state->selectedGroup = -1;
-                    state->simulation.reset(); state->inspectTime = 0; state->inspectPlaying = false;
+                    state->simulation.reset(state->simulation.formations[0].unit); state->inspectTime = 0; state->inspectPlaying = false;
                     state->drill.reset(state->unit);
                 }
             }
@@ -262,6 +267,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 
 struct Options {
+    bool swordBattle = false;
     bool formationPreview = false;
     UnitType unit = UnitType::Spearman;
     bool historical = false;
@@ -283,6 +289,7 @@ Options parseOptions() {
             if (arg == L"--smoke-test") options.smoke = true;
             else if (arg == L"--sekigahara") options.historical = true;
             else if (arg == L"--battle") options.historical = false;
+            else if (arg == L"--sword-battle") {options.swordBattle=true;options.historical=false;}
             else if (arg == L"--formation") {options.formationPreview=true;options.inspect=true;}
             else if (arg == L"--unit" && i + 1 < count) {
                 const std::wstring value = args[++i];
@@ -316,6 +323,7 @@ Options parseOptions() {
         }
     } catch (...) { LocalFree(args); throw; }
     LocalFree(args);
+    if(options.swordBattle && (options.inspect || options.formationPreview))throw std::runtime_error("Sword battle cannot be combined with inspect or formation mode");
     if (options.combatTest && (options.inspect || options.motionTest)) throw std::runtime_error("Combat test requires battlefield mode");
     if (options.smoke && options.capture.empty()) options.capture = L"smoke.bmp";
     return options;
@@ -341,6 +349,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         WindowState state; state.requestedSoldiers = options.soldiers;
         state.unit = options.unit;
+        if(options.swordBattle){state.unit=UnitType::Samurai;state.simulation.reset(UnitType::Samurai);}
         if (!options.smoke) {
             state.audioSettingsPath = executableDirectory() / L"audio-settings.txt";
             state.audioSettings.load(state.audioSettingsPath);
@@ -384,7 +393,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         const auto rebuildScene = [&] {
             SceneOptions sceneOptions;
             sceneOptions.formationPreview=state.drillEnabled;
-            sceneOptions.unit = state.inspect ? state.unit : UnitType::Spearman;
+            sceneOptions.unit = state.inspect ? state.unit : state.simulation.formations[0].unit;
             const std::wstring prefix = unitVisual(sceneOptions.unit).assetPrefix;
             const auto assetDirectory = executableDirectory() / L"assets/sprites";
             const auto sheetPath = assetDirectory / (prefix + L"_idle.png");
@@ -407,6 +416,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             renderer.setScene(activeScene); state.sceneDirty = false; requestedSoldiers = state.requestedSoldiers;
         };
         rebuildScene();
+        if(options.smoke && options.swordBattle){
+            SendMessageW(window,WM_KEYDOWN,VK_F7,0);rebuildScene();state.simulation.running=options.march;
+            if(activeScene.unit!=UnitType::Samurai || state.inspect || state.drillEnabled)
+                throw std::runtime_error("Sword battle entry failed");
+        }
         if (options.smoke && state.inspect && options.unit != UnitType::Spearman) {
             const auto original = state.unit;
             for (unsigned step = 0; step < unitVisuals.size(); ++step) {
@@ -454,7 +468,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             SendMessageW(window, WM_KEYDOWN, VK_HOME, 0);
             if (state.selected != -1 || state.selectedGroup != -1)
                 throw std::runtime_error("Reset did not clear small group selection");
-            state.simulation.reset(); state.simulation.running = options.march;
+            state.simulation.reset(state.simulation.formations[0].unit); state.simulation.running = options.march;
         }
         if (options.motionTest && !options.placeholder && !activeScene.animatedSoldiers)
             throw std::runtime_error("Motion test requires the packaged idle and walk sprite sheets");
@@ -614,16 +628,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                         state.audioSettings.selected == AudioBus::Environment ? L"環境 " : L"効果音 ") +
                     std::to_wstring(state.audioSettings.percent[static_cast<unsigned>(state.audioSettings.selected)]) + L"%]" +
                     (state.audioSaveFailed ? L" 音量保存失敗" : L"") +
-                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 M:消音 F5:音量対象 +/-:調整";
+                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 F7:刀戦闘 M:消音 F5:音量対象 +/-:調整";
                 const auto drillTitle=std::wstring(L"隊列確認 | ")+unitVisual(state.unit).name+
                     (state.drill.running?L" 進行中":L" 一時停止")+L" | 4列×6段・24体 | 隊列ずれ "+std::to_wstring(state.drill.error())+
-                    L" | 右クリック:移動 Space:再生/停止 H:その場で整列 Home:初期化 F4:兵種 F6:素材へ | 黄点:持ち場 水色:目的地";
+                    L" | 右クリック:移動 Space:再生/停止 H:その場で整列 Home:初期化 F4:兵種 F6:素材へ F7:刀戦闘 | 黄点:持ち場 水色:目的地";
                 SetWindowTextW(window, state.drillEnabled?drillTitle.c_str():title.c_str()); titleSeconds = 0; titleFrames = 0;
             }
             if (options.smoke && frame >= smokeFrames) break;
         }
         if (options.smoke) {
-            if (options.combatTest && (!observedCombat || !observedRetreat || !observedAttack || !observedFrontRelief || !observedLocalRout || state.simulation.result != BattleResult::RedVictory ||
+            if (options.combatTest && (!observedCombat || !observedRetreat || !observedAttack || (!observedFrontRelief && !options.swordBattle) || !observedLocalRout || state.simulation.result != BattleResult::RedVictory ||
                 !state.simulation.formations[1].defeated()))
                 throw std::runtime_error("Combat smoke failed: combat=" + std::to_string(observedCombat) +
                     " relief=" + std::to_string(observedFrontRelief) + " localRout=" + std::to_string(observedLocalRout) +
@@ -632,6 +646,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             std::ofstream report(std::filesystem::path(options.capture.wstring() + L".txt"));
             report << "PASS: " << frame << " frames; resize; camera pan/zoom/orbit; sprite updates; GPU readback\n"
                    << "Soldiers: " << displayedSoldiers << "\nCapture: " << state.width << 'x' << state.height << '\n'
+                   << "Combat unit: " << static_cast<unsigned>(state.simulation.formations[0].unit) << '\n'
                    << "Soldier sprites: " << (generatedSoldiers ? "Blender 8-direction PNG" : "placeholder") << '\n'
                    << "Walk atlas: " << (activeScene.animatedSoldiers ? "loaded" : "unavailable") << '\n'
                    << "Formation Z: " << state.simulation.formations[0].z << ", " << state.simulation.formations[1].z << '\n'

@@ -4,6 +4,7 @@
 #include "organization.h"
 #include "combat_geometry.h"
 #include "contact_fronts.h"
+#include "melee_profile.h"
 
 enum class FormationState { Idle, Marching, Engaged, Retreating, Routed };
 enum class BattleResult { Ongoing, RedVictory, BlueVictory, Draw };
@@ -27,6 +28,7 @@ struct Formation {
     float backtrackX = 0, backtrackZ = 0;
     bool detourExiting = false;
     float exitX = 0, exitZ = 0;
+    UnitType unit = UnitType::Spearman;
     bool defeated() const { return state == FormationState::Retreating || state == FormationState::Routed; }
     BattlePoint groupPosition(unsigned id) const {
         const auto& g = organization.smallGroups[id];
@@ -46,7 +48,7 @@ class BattleSimulation {
 public:
     BattleSimulation();
     void update(float seconds);
-    void reset();
+    void reset(UnitType unit = UnitType::Spearman);
     void move(unsigned index, float x, float z);
     void hold(unsigned index);
     unsigned nearbyRouts(unsigned team, unsigned group) const;

@@ -21,6 +21,8 @@ $appPath = Join-Path (Get-Location).Path 'build/Release/sengoku_rts.exe'
 
 素材確認でF6を押すと、24体の[隊列確認](docs/reference/formation_drill.md)へ切り替わります。右クリックで移動先を指定し、Spaceで再生。歩兵と騎馬の間隔・加速・旋回・再整列を比較できます。直接起動は `--formation --unit cavalry`。
 
+素材確認・隊列確認・戦闘試作でF7を押すと、刀武士同士の近接戦闘へ移ります。Spaceで進軍開始。直接起動は `--sword-battle`。[刀の間合いと実装範囲](docs/reference/melee_profiles.md)を参照してください。
+
 WASD / 矢印で移動、ホイールで拡大縮小、Rでカメラを初期化、1 / 2 / 3で兵士数を1,000 / 5,000 / 10,000体に切り替えます。Escで終了します。
 
 Q / Eを押している間、または中ボタンドラッグで、戦場をなめらかに回転できます。平行投影と見下ろす角度は維持します。兵士のSpriteは相対角度に応じた8方向切り替えです。

@@ -27,13 +27,15 @@ void BattleSimulation::hold(unsigned index) {
     formation.movementBlocked = false;
     formation.detouring = false;
 }
-void BattleSimulation::reset() {
+void BattleSimulation::reset(UnitType unit) {
+    const auto profile = meleeProfile(unit);
     ++generation;
     running = false; time = 0; accumulator = 0; result = BattleResult::Ongoing;
     // 最小デモの配置と移動先。関ヶ原のデータではない。
     formations = {{{0, -22, 0, 0, DirectX::XM_PIDIV2, 1.8f, false},
                    {0, 22, 0, 0, -DirectX::XM_PIDIV2, 1.8f, false}}};
     formations[1].morale = 85; // 退却の差を観察する試作条件。陣営固有の補正ではない。
+    for(auto& f:formations){f.unit=unit;f.speed=profile.moveSpeed;}
     for (auto& f : formations) for (auto& g : f.organization.smallGroups) { g.morale = f.morale; g.heading = f.heading; }
 }
 void BattleSimulation::update(float seconds) {
@@ -203,7 +205,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             if (contact) for (unsigned other = 0; other < 25; ++other) {
                 if (enemy.organization.smallGroups[other].routed || enemy.organization.smallGroups[other].strength <= 0) continue;
                 const auto q = positions[1 - team][other];
-                if (battleDistance(p, q) <= 7.5f) {
+                if (battleDistance(p, q) <= meleeProfile(formations[team].unit).groupRange) {
                     g.state = SmallGroupState::Engaged;
                     break;
                 }
@@ -216,8 +218,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 if (seeking) {
                     const auto q = positions[1 - team][g.attackTarget];
                     const float distance = battleDistance(p, q);
-                    target = distance > 7.5f ? Point{p.x + (q.x - p.x) / distance * (distance - 7.2f),
-                        p.z + (q.z - p.z) / distance * (distance - 7.2f)} : p;
+                    target = distance > meleeProfile(formations[team].unit).groupRange ? Point{p.x + (q.x - p.x) / distance * (distance - meleeProfile(formations[team].unit).stopDistance),
+                        p.z + (q.z - p.z) / distance * (distance - meleeProfile(formations[team].unit).stopDistance)} : p;
                 }
                 if (!f.maneuverEnabled && !f.defeated()) {
                     if (!g.canAttack && g.combatWait == CombatWait::OutOfRange) g.combatWait = CombatWait::Held;
@@ -237,8 +239,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     const auto enemyPoint = positions[1 - team][g.attackTarget];
                     const auto attackPoint = [&](Point from) {
                         const float length = battleDistance(from, enemyPoint);
-                        return length > 7.2f ? Point{enemyPoint.x - (enemyPoint.x - from.x) * 7.2f / length,
-                            enemyPoint.z - (enemyPoint.z - from.z) * 7.2f / length} : from;
+                        return length > meleeProfile(formations[team].unit).stopDistance ? Point{enemyPoint.x - (enemyPoint.x - from.x) * meleeProfile(formations[team].unit).stopDistance / length,
+                            enemyPoint.z - (enemyPoint.z - from.z) * meleeProfile(formations[team].unit).stopDistance / length} : from;
                     };
                     if (g.detourTarget >= 0 && battleDistance(p, {g.detourX, g.detourZ}) < 0.001f) g.detourTarget = -1;
                     if (g.detourTarget >= 0) {
@@ -488,9 +490,9 @@ void BattleSimulation::step(float seconds) {
             const float distance = battleDistance(points[team][id], points[1 - team][other]);
             if (distance >= 16 || distance < 0.001f) continue;
             const auto p = points[team][id], q = points[1 - team][other];
-            const bool inRange = distance <= 7.5f;
-            const BattlePoint end = inRange ? q : BattlePoint{q.x - (q.x - p.x) * 7.2f / distance,
-                q.z - (q.z - p.z) * 7.2f / distance};
+            const bool inRange = distance <= meleeProfile(formations[team].unit).groupRange;
+            const BattlePoint end = inRange ? q : BattlePoint{q.x - (q.x - p.x) * meleeProfile(formations[team].unit).stopDistance / distance,
+                q.z - (q.z - p.z) * meleeProfile(formations[team].unit).stopDistance / distance};
             const float clearance = inRange ? 2.25f : 4.5f + 3 * std::max(formations[team].speed, formations[1 - team].speed) * seconds;
             bool blocked = false;
             for (unsigned blockerTeam = 0; blockerTeam < 2 && !blocked; ++blockerTeam)
@@ -508,7 +510,7 @@ void BattleSimulation::step(float seconds) {
         const auto p = points[team][id];
         const float targetHeading = g.attackTarget >= 0 ? std::atan2(points[1 - team][g.attackTarget].z - p.z,
             points[1 - team][g.attackTarget].x - p.x) : formations[team].heading;
-        g.heading = turnToward(g.heading, targetHeading, DirectX::XM_PI * seconds);
+        g.heading = turnToward(g.heading, targetHeading, meleeProfile(formations[team].unit).turnRate * seconds);
     }
     bool localContact = false;
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
@@ -518,7 +520,7 @@ void BattleSimulation::step(float seconds) {
         const auto p = points[team][id], q = points[1 - team][g.attackTarget];
         const float distance = battleDistance(p, q);
         g.combatWait = CombatWait::OutOfRange;
-        if (distance > 7.5f || distance < 0.001f) continue;
+        if (distance > meleeProfile(formations[team].unit).groupRange || distance < 0.001f) continue;
         localContact = true;
         if (g.route == SmallGroupRoute::Returning || g.route == SmallGroupRoute::ReliefReserve ||
             g.route == SmallGroupRoute::ReliefWithdraw) { g.combatWait = CombatWait::Returning; continue; }
@@ -536,7 +538,7 @@ void BattleSimulation::step(float seconds) {
         const auto& victim = formations[1 - team].organization.smallGroups[g.attackTarget];
         const float defense = (std::cos(victim.heading) * (p.x - q.x) + std::sin(victim.heading) * (p.z - q.z)) / distance;
         const float directionBonus = defense < -0.5f ? 1.5f : defense < 0.5f ? 1.25f : 1.0f;
-        damage[1 - team][g.attackTarget] += 1.2f * (g.strength / 20) * (0.5f + f.cohesion / 200) *
+        damage[1 - team][g.attackTarget] += meleeProfile(f.unit).damagePerSecond * (g.strength / 20) * (0.5f + f.cohesion / 200) *
             (0.5f + g.morale / 200) * directionBonus * seconds;
     }
     for (unsigned i = 0; i < formations.size(); ++i) {

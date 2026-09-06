@@ -171,7 +171,8 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
                         const float squared = x * x + z * z;
                         if (squared < nearest) { nearest = squared; target = static_cast<int>(other); }
                     }
-                    if (nearest > 3.5f * 3.5f) continue;
+                    const float reach = meleeProfile(formation.unit).individualRange;
+                    if (nearest > reach * reach) continue;
                     s.attacking = true; s.attackTarget = target; s.walking = false;
                     const auto& opponent = soldiers[static_cast<unsigned>(target)];
                     s.heading = std::atan2(opponent.position.z - s.position.z, opponent.position.x - s.position.x);
