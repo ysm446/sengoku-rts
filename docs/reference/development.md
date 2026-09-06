@@ -1,7 +1,7 @@
 # 開発・起動・検証手順
 
 作成日時: 2026-09-05 10:13
-更新日時: 2026-09-06 12:24
+更新日時: 2026-09-06 13:55
 
 ## 必要環境
 
@@ -25,6 +25,17 @@ $appPath = Join-Path (Get-Location).Path 'build/Release/sengoku_rts.exe'
 ```
 
 `Debug`も指定できる。スクリプトはCMakeでx64のVisual Studioプロジェクトを生成し、ビルド後にCTestを実行する。外部ライブラリのダウンロードは行わない。
+
+## 槍・刀の混成戦闘
+
+通常の戦場でF8、Spaceの順に押すと槍足軽と刀武士の500対500を開始する。直接起動する場合:
+
+```powershell
+$appPath = Join-Path (Get-Location).Path 'build/Release/sengoku_rts.exe'
+& $appPath --mixed-battle
+```
+
+Homeで混成編成のまま初期化する。F7で刀だけの戦闘へ切り替える。`dx12_mixed_battle` は混成戦闘の操作・初期化・素材切り替え・交戦・敗走と勝敗を検証する。弓・騎馬はまだ参加しない。[混成の仕様](melee_profiles.md)を参照。
 
 ## 関ヶ原デモ
 

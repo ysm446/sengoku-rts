@@ -29,6 +29,7 @@ struct Formation {
     bool detourExiting = false;
     float exitX = 0, exitZ = 0;
     UnitType unit = UnitType::Spearman;
+    UnitType groupUnit(unsigned id) const { return organization.smallGroups.at(id).unit.value_or(unit); }
     bool defeated() const { return state == FormationState::Retreating || state == FormationState::Routed; }
     BattlePoint groupPosition(unsigned id) const {
         const auto& g = organization.smallGroups[id];
@@ -48,7 +49,8 @@ class BattleSimulation {
 public:
     BattleSimulation();
     void update(float seconds);
-    void reset(UnitType unit = UnitType::Spearman);
+    void reset(UnitType unit = UnitType::Spearman, bool mixed = false);
+    bool mixed = false;
     void move(unsigned index, float x, float z);
     void hold(unsigned index);
     unsigned nearbyRouts(unsigned team, unsigned group) const;

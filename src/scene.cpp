@@ -81,6 +81,7 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
         throw std::invalid_argument("Soldier count must be even and between 2 and 10000.");
     Scene scene;
     scene.unit = options.unit;
+    scene.mixed = options.mixed;
     scene.inspect = options.inspect;
     scene.inspectAttack = options.inspectAttack;
     scene.headingOffset = static_cast<float>(options.directionOffset % 8) * DirectX::XM_PIDIV4;
@@ -105,6 +106,18 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
                 std::copy_n(attack.data() + y * Scene::tileWidth * 8, Scene::tileWidth * 8,
                     scene.atlas.data() + (y + Scene::attackRow * Scene::tileHeight) * Scene::atlasWidth + Scene::tileWidth * 4);
             scene.attackSoldiers = true;
+        }
+    }
+    if (options.mixed && scene.generatedSoldiers) {
+        const auto directory = options.soldierSheet.parent_path();
+        const wchar_t* names[] = {L"samurai_idle.png", L"samurai_walk.png", L"samurai_attack.png"};
+        const unsigned rows[] = {0, 1, Scene::attackRow};
+        const unsigned frames[] = {1, Scene::walkFrames, Scene::attackFrames};
+        for (unsigned animation = 0; animation < 3; ++animation) {
+            const auto pixels = loadSpriteSheet(directory / names[animation], Scene::tileWidth * 8, Scene::tileHeight * frames[animation]);
+            for (unsigned y = 0; y < Scene::tileHeight * frames[animation]; ++y)
+                std::copy_n(pixels.data() + y * Scene::tileWidth * 8, Scene::tileWidth * 8,
+                    scene.atlas.data() + (Scene::atlasHeight / 2 + rows[animation] * Scene::tileHeight + y) * Scene::atlasWidth + 4 * Scene::tileWidth);
         }
     }
     constexpr int cells = 100;
@@ -263,21 +276,23 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
     if (!scene.inspect) scene.individuals->update(simulation);
     for (const auto& binding : scene.soldierBindings) {
         auto& sprite = scene.sprites[binding.spriteIndex];
+        const auto renderedUnit = scene.inspect ? scene.unit : simulation.formations[binding.formation].groupUnit(Organization::groupForSoldier(binding.ordinal));
+        const unsigned tileOffset = scene.mixed && renderedUnit == UnitType::Samurai ? Scene::unitTileCount : 0;
         float heading = binding.heading + scene.headingOffset;
         double animationTime = simulation.time;
         bool walking = simulation.time > 0;
         bool attacking = scene.inspect && scene.inspectAttack;
         if (scene.inspect && scene.generatedSoldiers) {
-            const float size = unitVisual(scene.unit).idleSize;
+            const float size = unitVisual(renderedUnit).idleSize;
             sprite.size = {size,size};
         }
-        sprite.pivot = scene.generatedSoldiers ? unitVisual(scene.unit).idlePivot : 0;
+        sprite.pivot = scene.generatedSoldiers ? unitVisual(renderedUnit).idlePivot : 0;
         sprite.rightAxis = {}; sprite.upAxis = {};
         if (!scene.inspect) {
             const auto& soldier = scene.individuals->soldiers[binding.formation * SoldierVisuals::perTeam + binding.ordinal];
             heading = soldier.heading; animationTime = soldier.animationTime; walking = soldier.walking;
             attacking = soldier.attacking;
-            sprite.size = scene.generatedSoldiers ? DirectX::XMFLOAT2{3.4f, 3.4f} : DirectX::XMFLOAT2{1.7f, 2.7f};
+            sprite.size = scene.generatedSoldiers ? DirectX::XMFLOAT2{unitVisual(renderedUnit).idleSize, unitVisual(renderedUnit).idleSize} : DirectX::XMFLOAT2{1.7f, 2.7f};
             sprite.position = soldier.position;
             sprite.tint = binding.formation == 0 ? DirectX::XMFLOAT3{0.85f, 0.34f, 0.25f} : DirectX::XMFLOAT3{0.34f, 0.48f, 0.66f};
             if (static_cast<int>(binding.formation) == selected && soldier.life == SoldierLife::Alive) {
@@ -308,7 +323,7 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
                 sprite.rightAxis = blend(cameraRight, right); sprite.upAxis = blend(cameraUp, up);
                 sprite.position.y += 0.05f;
                 // 倒れた図柄は世界方向に固定し、カメラ回転でSpriteを切り替えない。
-                sprite.tile = scene.generatedSoldiers ? 4 : 0;
+                sprite.tile = scene.generatedSoldiers ? tileOffset + 4 : 0;
                 continue;
             }
             if (soldier.attacking && !scene.attackSoldiers) {
@@ -322,11 +337,11 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
         unsigned frame = 0;
         if (scene.attackSoldiers && attacking) {
             frame = Scene::attackRow + static_cast<unsigned>(std::fmod(animationTime * 8.0, Scene::attackFrames));
-            const float size = unitVisual(scene.unit).attackSize;
+            const float size = unitVisual(renderedUnit).attackSize;
             sprite.size = {size, size};
             sprite.pivot = .75f;
         } else if (scene.animatedSoldiers && walking)
             frame = 1 + (static_cast<unsigned>(std::fmod(animationTime * 8.0, 8.0)) + binding.phase) % Scene::walkFrames;
-        sprite.tile = scene.generatedSoldiers ? 4 + camera.spriteDirection(heading) + frame * Scene::atlasColumns : 0;
+        sprite.tile = scene.generatedSoldiers ? tileOffset + 4 + camera.spriteDirection(heading) + frame * Scene::atlasColumns : 0;
     }
 }

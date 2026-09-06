@@ -140,7 +140,7 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
         // 隊列確認と同じ加速値で持ち場へ追従する。遠い持ち場への急加速を制限する。
         // 表示密度と実兵力は異なるため、経路や損害を決めるSimulationへは書き戻さない。
         const float follow = static_cast<float>(1 - std::exp(-(4 + variation * 5) * dt));
-        const auto movement = movementProfile(formation.unit);
+        const auto movement = movementProfile(formation.groupUnit(soldier.smallGroup));
         const float maxSpeed = formation.speed * (group.routed || formation.defeated() ? 2.0f : 1.5f);
         const float forwardX = std::cos(soldier.heading), forwardZ = std::sin(soldier.heading);
         const float alignment = distance > 0.003f ? std::clamp((dx * forwardX + dz * forwardZ) / distance, 0.0f, 1.0f) : 0;
@@ -201,57 +201,65 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
                     }
                 }
                 if (targetGroup < 0 || enemy.organization.smallGroups[targetGroup].routed) continue;
-                const auto q = enemy.groupPosition(targetGroup);
-                const float distance = battleDistance(p, q);
-                if (distance < 0.001f) continue;
-                const float fx = (q.x - p.x) / distance, fz = (q.z - p.z) / distance;
-                const auto lane = [&](const SoldierVisual& s) {
-                    return static_cast<int>(std::floor((-fz * s.position.x + fx * s.position.z) / 0.75f));
-                };
-                const auto forward = [&](const SoldierVisual& s) { return fx * s.position.x + fz * s.position.z; };
-                std::map<int, float> fronts, enemyFronts;
-                for (unsigned id : members[team][group]) {
-                    const auto& s = soldiers[id];
-                    const int key = lane(s);
-                    const auto found = fronts.find(key);
-                    if (found == fronts.end()) fronts.emplace(key, forward(s));
-                    else found->second = std::max(found->second, forward(s));
-                }
-                for (unsigned id : members[1 - team][targetGroup]) {
-                    const auto& s = soldiers[id];
-                    const int key = lane(s);
-                    const auto found = enemyFronts.find(key);
-                    if (found == enemyFronts.end()) enemyFronts.emplace(key, forward(s));
-                    else found->second = std::min(found->second, forward(s));
-                }
-                std::vector<unsigned> opponents;
-                for (unsigned id : members[1 - team][targetGroup])
-                    if (forward(soldiers[id]) <= enemyFronts.at(lane(soldiers[id])) + 0.1f) opponents.push_back(id);
-                for (unsigned id : members[team][group]) {
-                    auto& s = soldiers[id];
-                    if (forward(s) < fronts.at(lane(s)) - 0.1f) continue;
-                    float nearest = std::numeric_limits<float>::max();
-                    int target = -1;
-                    for (unsigned other : opponents) {
-                        const auto& opponent = soldiers[other];
-                        const float x = s.position.x - opponent.position.x, z = s.position.z - opponent.position.z;
-                        const float squared = x * x + z * z;
-                        if (squared < nearest) { nearest = squared; target = static_cast<int>(other); }
+                const bool simulated = unit.attackTarget >= 0;
+                for (unsigned candidateGroup = 0; candidateGroup < 25; ++candidateGroup) {
+                    if (simulated ? unit.activeOpponents[candidateGroup] <= 0 : candidateGroup != static_cast<unsigned>(targetGroup)) continue;
+                    targetGroup = static_cast<int>(candidateGroup);
+                    unsigned remaining = simulated ? static_cast<unsigned>(std::ceil(members[team][group].size() *
+                        unit.activeOpponents[candidateGroup] / std::max(unit.strength, 0.001f))) : static_cast<unsigned>(members[team][group].size());
+                    const auto q = enemy.groupPosition(targetGroup);
+                    const float distance = battleDistance(p, q);
+                    if (distance < 0.001f) continue;
+                    const float fx = (q.x - p.x) / distance, fz = (q.z - p.z) / distance;
+                    const auto lane = [&](const SoldierVisual& s) {
+                        return static_cast<int>(std::floor((-fz * s.position.x + fx * s.position.z) / 0.75f));
+                    };
+                    const auto forward = [&](const SoldierVisual& s) { return fx * s.position.x + fz * s.position.z; };
+                    std::map<int, float> fronts, enemyFronts;
+                    for (unsigned id : members[team][group]) {
+                        const auto& s = soldiers[id];
+                        const int key = lane(s);
+                        const auto found = fronts.find(key);
+                        if (found == fronts.end()) fronts.emplace(key, forward(s));
+                        else found->second = std::max(found->second, forward(s));
                     }
-                    const float reach = meleeProfile(formation.unit).individualRange;
-                    if (nearest > reach * reach) continue;
-                    const auto& opponent = soldiers[static_cast<unsigned>(target)];
-                    desiredHeadings[id] = std::atan2(opponent.position.z - s.position.z, opponent.position.x - s.position.x);
-                    const float turned = turnToward(s.heading, desiredHeadings[id],
-                        movementProfile(formation.unit).turnRate * static_cast<float>(dt));
-                    // 接近後も向き直る時間を必要とし、背を向けたまま攻撃しない。
-                    if (std::abs(std::remainder(desiredHeadings[id] - turned, 6.283185307f)) > 0.35f) continue;
-                    s.attacking = true; s.attackTarget = target; s.walking = false;
-                    const float variation = static_cast<float>(((id % perTeam) * 53) % 101) / 100;
-                    const double next = s.animationTime + dt * (0.85 + variation * 0.3);
-                    if (std::floor(next - 0.5) > std::floor(s.animationTime - 0.5)) {
-                        hits.push_back(static_cast<unsigned>(target));
-                        ++impacts[team]; impactPositions[team] = opponent.position;
+                    for (unsigned id : members[1 - team][targetGroup]) {
+                        const auto& s = soldiers[id];
+                        const int key = lane(s);
+                        const auto found = enemyFronts.find(key);
+                        if (found == enemyFronts.end()) enemyFronts.emplace(key, forward(s));
+                        else found->second = std::min(found->second, forward(s));
+                    }
+                    std::vector<unsigned> opponents;
+                    for (unsigned id : members[1 - team][targetGroup])
+                        if (forward(soldiers[id]) <= enemyFronts.at(lane(soldiers[id])) + 0.1f) opponents.push_back(id);
+                    for (unsigned id : members[team][group]) {
+                        auto& s = soldiers[id];
+                        if (remaining == 0 || s.attacking || forward(s) < fronts.at(lane(s)) - 0.1f) continue;
+                        float nearest = std::numeric_limits<float>::max();
+                        int target = -1;
+                        for (unsigned other : opponents) {
+                            const auto& opponent = soldiers[other];
+                            const float x = s.position.x - opponent.position.x, z = s.position.z - opponent.position.z;
+                            const float squared = x * x + z * z;
+                            if (squared < nearest) { nearest = squared; target = static_cast<int>(other); }
+                        }
+                        const float reach = meleeProfile(formation.groupUnit(group)).individualRange;
+                        if (nearest > reach * reach) continue;
+                        const auto& opponent = soldiers[static_cast<unsigned>(target)];
+                        desiredHeadings[id] = std::atan2(opponent.position.z - s.position.z, opponent.position.x - s.position.x);
+                        const float turned = turnToward(s.heading, desiredHeadings[id],
+                            movementProfile(formation.groupUnit(group)).turnRate * static_cast<float>(dt));
+                        // 接近後も向き直る時間を必要とし、背を向けたまま攻撃しない。
+                        if (std::abs(std::remainder(desiredHeadings[id] - turned, 6.283185307f)) > 0.35f) continue;
+                        --remaining;
+                        s.attacking = true; s.attackTarget = target; s.walking = false;
+                        const float variation = static_cast<float>(((id % perTeam) * 53) % 101) / 100;
+                        const double next = s.animationTime + dt * (0.85 + variation * 0.3);
+                        if (std::floor(next - 0.5) > std::floor(s.animationTime - 0.5)) {
+                            hits.push_back(static_cast<unsigned>(target));
+                            ++impacts[team]; impactPositions[team] = opponent.position;
+                        }
                     }
                 }
             }
@@ -268,7 +276,7 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
             auto& soldier = soldiers[id];
             if (soldier.life == SoldierLife::Alive) {
                 soldier.heading = turnToward(soldier.heading, desiredHeadings[id],
-                    movementProfile(simulation.formations[id / perTeam].unit).turnRate * static_cast<float>(dt));
+                    movementProfile(simulation.formations[id / perTeam].groupUnit(soldiers[id].smallGroup)).turnRate * static_cast<float>(dt));
             }
             if (soldier.life == SoldierLife::Alive && (soldier.walking || soldier.attacking)) {
                 const float variation = static_cast<float>(((id % perTeam) * 53) % 101) / 100;

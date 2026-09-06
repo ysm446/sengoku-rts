@@ -64,6 +64,38 @@ int main() {
             }
             test.toggle(); return test;
         };
+        for (const auto second : {BattlePoint{-7, 0}, BattlePoint{0, 7}, BattlePoint{6, 2.6f}}) {
+            auto multiple = duel(second.x == 6 ? BattlePoint{6, -2.6f} : BattlePoint{7, 0});
+            auto& attacker = multiple.formations[0].organization.smallGroups[12];
+            attacker.faceDeployment.accountedStrength = 20;
+            attacker.faceDeployment.deployed = {5, 5, 5, 5};
+            auto& opponent = multiple.formations[1].organization.smallGroups[13];
+            opponent.offsetX = second.x - multiple.formations[1].x - 5.2f;
+            opponent.offsetZ = second.z;
+            multiple.update(1.0f / 60);
+            require(attacker.activeOpponents[12] > 0 && attacker.activeOpponents[13] > 0,
+                "Multiple contact opponents did not participate simultaneously");
+            require(multiple.formations[1].organization.smallGroups[12].strength < 20 && opponent.strength < 20,
+                "Simultaneous contact damage missed an opponent");
+            float sum = 0; for (float fighters : attacker.activeOpponents) sum += fighters;
+            require(std::abs(sum - attacker.activeFighters) < .0001f && sum <= 20,
+                "Simultaneous attacks duplicated strength");
+            auto batched = multiple, split = multiple;
+            batched.update(.5f); for (unsigned frame = 0; frame < 30; ++frame) split.update(1.0f / 60);
+            same(batched, split);
+        }
+        BattleSimulation mixed;
+        mixed.reset(UnitType::Spearman, true);
+        for (const auto& formation : mixed.formations) {
+            unsigned swords = 0;
+            for (unsigned id = 0; id < 25; ++id) swords += formation.groupUnit(id) == UnitType::Samurai;
+            require(swords == 10 && formation.strength == 500, "Mixed composition lost its units or strength");
+        }
+        auto mixedRange = duel({7, 0});
+        mixedRange.formations[0].organization.smallGroups[12].unit = UnitType::Samurai;
+        mixedRange.update(.1f);
+        require(mixedRange.formations[1].strength == 500 && mixedRange.formations[0].strength < 500,
+            "Mixed units did not use their own melee range");
         auto distant = duel({7, 3}); distant.update(0.1f);
         for (unsigned condition = 0; condition < 3; ++condition) {
             auto marching = duel({6, 0});

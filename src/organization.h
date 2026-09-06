@@ -1,6 +1,8 @@
 #pragma once
 #include <array>
 #include "contact_fronts.h"
+#include "unit_type.h"
+#include <optional>
 
 // ユーザー指定の4階層。人数は編成兵力であり描画Sprite数ではない。
 enum class SmallGroupState { Waiting, Advancing, Engaged, Retreating, Fleeing, Routed };
@@ -20,6 +22,8 @@ struct SmallGroup {
     float heading = 0;
     FaceDeployment faceDeployment;
     float activeFighters = 0;
+    std::array<float, 25> activeOpponents{};
+    std::optional<UnitType> unit;
     int attackTarget = -1;
     bool canAttack = false;
     CombatWait combatWait = CombatWait::NoTarget;

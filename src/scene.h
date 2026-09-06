@@ -57,15 +57,17 @@ struct SoldierVisuals {
 
 struct Scene {
     UnitType unit = UnitType::Spearman;
+    bool mixed = false;
     static constexpr unsigned tileWidth = 64;
     static constexpr unsigned tileHeight = 64;
     static constexpr unsigned atlasColumns = 12;
     static constexpr unsigned walkFrames = 8;
     static constexpr unsigned attackFrames = 8;
     static constexpr unsigned attackRow = 1 + walkFrames;
-    static constexpr unsigned tileCount = atlasColumns * (1 + walkFrames + attackFrames);
+    static constexpr unsigned unitTileCount = atlasColumns * (1 + walkFrames + attackFrames);
+    static constexpr unsigned tileCount = unitTileCount * 2;
     static constexpr unsigned atlasWidth = tileWidth * atlasColumns;
-    static constexpr unsigned atlasHeight = tileHeight * (1 + walkFrames + attackFrames);
+    static constexpr unsigned atlasHeight = tileHeight * (1 + walkFrames + attackFrames) * 2;
     std::vector<TerrainVertex> terrain;
     std::vector<SpriteInstance> sprites;
     std::size_t routMarkerStart = 0;
@@ -93,6 +95,7 @@ struct Scene {
 struct SceneOptions {
     bool formationPreview = false;
     UnitType unit = UnitType::Spearman;
+    bool mixed = false;
     std::filesystem::path soldierSheet;
     std::filesystem::path walkSheet;
     std::filesystem::path attackSheet;

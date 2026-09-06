@@ -57,7 +57,7 @@ SpriteOutput spriteVS(SpriteInput input, uint id : SV_VertexID) {
     result.position = mul(float4(world, 1), viewProjection);
     // 隣のAtlasタイルを拾わないよう半Texel内側に収める。
     result.uv = float2(((input.tile % 12) * 64 + 0.5 + corner.x * 63) / 768,
-                       ((input.tile / 12) * 64 + 0.5 + corner.y * 63) / 1088);
+                       ((input.tile / 12) * 64 + 0.5 + corner.y * 63) / 2176);
     result.tile = input.tile;
     result.tint = input.tint;
     return result;

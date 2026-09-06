@@ -134,7 +134,8 @@ struct WindowState {
             for (unsigned face = 0; face < 4; ++face) if (fronts.faces[face].width() > 0 || group.faceDeployment.deployed[face] > 0.01f) {
                 text += std::wstring(L" ") + names[face] + decimal(group.faceDeployment.deployed[face]) + L"→" + decimal(allocation.faces[face].fighters()) + L"人";
             }
-            text += L" 予備" + decimal(group.faceDeployment.reserve()) + L"人 攻撃参加" + decimal(group.activeFighters) + L"人]";
+            const auto opponents = std::count_if(group.activeOpponents.begin(), group.activeOpponents.end(), [](float value) { return value > 0; });
+            text += L" 予備" + decimal(group.faceDeployment.reserve()) + L"人 攻撃参加" + decimal(group.activeFighters) + L"人 / " + std::to_wstring(opponents) + L"小組]";
         }
         if (simulation.result == BattleResult::Ongoing && !group.routed && !group.canAttack && group.route == SmallGroupRoute::None && !simulation.formations[static_cast<unsigned>(selected)].defeated()) {
             const wchar_t* reason = group.combatWait == CombatWait::NoTarget ? L"近くに攻撃対象なし" :
@@ -229,6 +230,11 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                     state->drillEnabled=!state->drillEnabled;state->drill.reset(state->unit);state->resetCamera();state->sceneDirty=true;
                 }
                 if (wparam == 'H' && state->drillEnabled) state->drill.hold();
+                if (wparam == VK_F8) {
+                    state->unit = UnitType::Spearman; state->inspect = false; state->drillEnabled = false;
+                    state->simulation.reset(UnitType::Spearman, true); state->selected = state->selectedGroup = -1;
+                    state->resetCamera(); state->sceneDirty = true;
+                }
                 if(wparam==VK_F7){
                     state->unit=UnitType::Samurai;state->inspect=false;state->drillEnabled=false;
                     state->simulation.reset(UnitType::Samurai);state->selected=state->selectedGroup=-1;
@@ -252,7 +258,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 }
                 if (wparam == VK_HOME) {
                     state->selected = state->selectedGroup = -1;
-                    state->simulation.reset(state->simulation.formations[0].unit); state->inspectTime = 0; state->inspectPlaying = false;
+                    state->simulation.reset(state->simulation.formations[0].unit, state->simulation.mixed); state->inspectTime = 0; state->inspectPlaying = false;
                     state->drill.reset(state->unit);
                 }
             }
@@ -270,6 +276,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 
 struct Options {
     bool swordBattle = false;
+    bool mixedBattle = false;
     bool formationPreview = false;
     UnitType unit = UnitType::Spearman;
     bool historical = false;
@@ -290,6 +297,7 @@ Options parseOptions() {
             if (arg == L"--smoke-test") options.smoke = true;
             else if (arg == L"--sekigahara") options.historical = true;
             else if (arg == L"--battle") options.historical = false;
+            else if (arg == L"--mixed-battle") { options.mixedBattle = true; options.historical = false; }
             else if (arg == L"--sword-battle") {options.swordBattle=true;options.historical=false;}
             else if (arg == L"--formation") {options.formationPreview=true;options.inspect=true;}
             else if (arg == L"--unit" && i + 1 < count) {
@@ -324,6 +332,7 @@ Options parseOptions() {
         }
     } catch (...) { LocalFree(args); throw; }
     LocalFree(args);
+    if (options.mixedBattle && (options.swordBattle || options.inspect || options.formationPreview)) throw std::runtime_error("Mixed battle cannot be combined with other modes");
     if(options.swordBattle && (options.inspect || options.formationPreview))throw std::runtime_error("Sword battle cannot be combined with inspect or formation mode");
     if (options.combatTest && (options.inspect || options.motionTest)) throw std::runtime_error("Combat test requires battlefield mode");
     if (options.smoke && options.capture.empty()) options.capture = L"smoke.bmp";
@@ -350,6 +359,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         WindowState state; state.requestedSoldiers = options.soldiers;
         state.unit = options.unit;
+        if (options.mixedBattle) state.simulation.reset(UnitType::Spearman, true);
         if(options.swordBattle){state.unit=UnitType::Samurai;state.simulation.reset(UnitType::Samurai);}
         if (!options.smoke) {
             state.audioSettingsPath = executableDirectory() / L"audio-settings.txt";
@@ -394,6 +404,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         const auto rebuildScene = [&] {
             SceneOptions sceneOptions;
             sceneOptions.formationPreview=state.drillEnabled;
+            sceneOptions.mixed = !state.inspect && state.simulation.mixed;
             sceneOptions.unit = state.inspect ? state.unit : state.simulation.formations[0].unit;
             const std::wstring prefix = unitVisual(sceneOptions.unit).assetPrefix;
             const auto assetDirectory = executableDirectory() / L"assets/sprites";
@@ -417,6 +428,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             renderer.setScene(activeScene); state.sceneDirty = false; requestedSoldiers = state.requestedSoldiers;
         };
         rebuildScene();
+        if (options.smoke && options.mixedBattle) {
+            SendMessageW(window, WM_KEYDOWN, VK_F8, 0);
+            SendMessageW(window, WM_KEYDOWN, VK_HOME, 0);
+            rebuildScene();
+            state.simulation.running = options.march;
+            updateSceneSprites(activeScene, state.simulation, state.camera);
+            unsigned spears = 0, swords = 0;
+            for (const auto& binding : activeScene.soldierBindings) {
+                const auto tile = activeScene.sprites[binding.spriteIndex].tile;
+                if (tile >= Scene::unitTileCount) ++swords; else ++spears;
+            }
+            if (!state.simulation.mixed || !activeScene.mixed || state.inspect || state.drillEnabled ||
+                (activeScene.generatedSoldiers && (!spears || !swords)))
+                throw std::runtime_error("Mixed battle input, reset or sprite banks failed");
+        }
         if(options.smoke && options.swordBattle){
             SendMessageW(window,WM_KEYDOWN,VK_F7,0);rebuildScene();state.simulation.running=options.march;
             if(activeScene.unit!=UnitType::Samurai || state.inspect || state.drillEnabled)
@@ -469,7 +495,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             SendMessageW(window, WM_KEYDOWN, VK_HOME, 0);
             if (state.selected != -1 || state.selectedGroup != -1)
                 throw std::runtime_error("Reset did not clear small group selection");
-            state.simulation.reset(state.simulation.formations[0].unit); state.simulation.running = options.march;
+            state.simulation.reset(state.simulation.formations[0].unit, state.simulation.mixed); state.simulation.running = options.march;
         }
         if (options.motionTest && !options.placeholder && !activeScene.animatedSoldiers)
             throw std::runtime_error("Motion test requires the packaged idle and walk sprite sheets");
@@ -620,7 +646,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 const int fps = titleSeconds > 0 ? static_cast<int>(titleFrames / titleSeconds) : 0;
                 const auto title = std::wstring(L"戦国合戦 | ") + (state.inspect ? L"素材確認" : state.selectionStatus()) + L" | " +
                     (state.inspect ? L"" : battleStatus(state.simulation)) + L" | " +
-                    (generatedSoldiers ? unitVisual(activeScene.unit).name : L"仮素材") +
+                    (state.simulation.mixed && !state.inspect ? L"槍・刀混成" : generatedSoldiers ? unitVisual(activeScene.unit).name : L"仮素材") +
                     (state.inspect ? L" 素材確認 | " : L" 戦場 | ") + L"表示上限 " + std::to_wstring(displayedSoldiers) + L" | " +
                     std::to_wstring(fps) + L" fps | " + (state.inspect ? L"素材確認" :
                         (state.selected == 0 ? L"赤部隊を選択" : state.selected == 1 ? L"青部隊を選択" : L"選択なし")) +
@@ -629,7 +655,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                         state.audioSettings.selected == AudioBus::Environment ? L"環境 " : L"効果音 ") +
                     std::to_wstring(state.audioSettings.percent[static_cast<unsigned>(state.audioSettings.selected)]) + L"%]" +
                     (state.audioSaveFailed ? L" 音量保存失敗" : L"") +
-                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 F7:刀戦闘 M:消音 F5:音量対象 +/-:調整";
+                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 F7:刀戦闘 F8:槍・刀混成 M:消音 F5:音量対象 +/-:調整";
                 const auto drillTitle=std::wstring(L"隊列確認 | ")+unitVisual(state.unit).name+
                     (state.drill.running?L" 進行中":L" 一時停止")+L" | 4列×6段・24体 | 隊列ずれ "+std::to_wstring(state.drill.error())+
                     L" | 右クリック:移動 Space:再生/停止 H:その場で整列 Home:初期化 F4:兵種 F6:素材へ F7:刀戦闘 | 黄点:持ち場 水色:目的地";
