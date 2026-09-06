@@ -19,6 +19,8 @@ struct SmallGroup {
     float offsetX = 0, offsetZ = 0;
     float targetOffsetX = 0, targetOffsetZ = 0;
     float fatigue = 0;
+    bool resting = false;
+    double lastDamageTime = -10;
     float heading = 0;
     FaceDeployment faceDeployment;
     float activeFighters = 0;

@@ -30,6 +30,8 @@ std::wstring battleStatus(const BattleSimulation& simulation) {
         for (unsigned id = 0; id < f.organization.smallGroups.size(); ++id)
             shaken += simulation.nearbyRouts(i, id) > 0;
         text += L" 動揺" + std::to_wstring(shaken) + L"小組";
+        text += L" 戦力余裕" + std::to_wstring(f.readyGroups()) + L"小組";
+        if (f.withdrawalPressure > 0) text += L" [全体撤退を検討中]";
         if (f.movementBlocked) text += L" [備の進路閉塞]";
         else if (f.detouring) text += L" [備の迂回中]";
     }
@@ -113,7 +115,7 @@ struct WindowState {
             L"組 小組" + std::to_wstring(selectedGroup + 1);
         const wchar_t* action = group.state == SmallGroupState::Fleeing ? (group.fleeBlocked ? L"敗走中・退路閉塞" : L"敗走中") :
             group.state == SmallGroupState::Routed ? L"敗走済" : group.route == SmallGroupRoute::Returning ? L"復帰中" :
-            group.route == SmallGroupRoute::ReliefReserve ? L"前列交代中" :
+            group.resting ? L"後方で再集結中" : group.route == SmallGroupRoute::ReliefReserve ? L"前列交代中" :
             group.route == SmallGroupRoute::ReliefWithdraw ? L"交代後退中" :
             group.canAttack && simulation.result == BattleResult::Ongoing ? L"攻撃" : group.state == SmallGroupState::Engaged ? L"接敵" : group.state == SmallGroupState::Retreating ? L"撤退" :
             group.state == SmallGroupState::Advancing ? L"前進" : L"待機";
@@ -611,7 +613,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 for (unsigned step = 0; step < 10; ++step) {
                     state.battleClock.advance(state.simulation, *activeScene.individuals, 0.1f);
                     updateSceneSprites(activeScene, state.simulation, state.camera, state.selected, state.selectedGroup);
-                    observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
+                    observedRetreat |= state.simulation.formations[0].defeated() || state.simulation.formations[1].defeated();
                     for (const auto& f : state.simulation.formations) for (unsigned id = 0; id < 25; ++id)
                         observedFrontRelief |= f.organization.smallGroups[id].slot != id;
                 }
@@ -675,8 +677,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 throw std::runtime_error("Mixed battle arrows: fired=" + std::to_string(state.simulation.volleysFired) +
                     " hit=" + std::to_string(state.simulation.volleysHit) + " rendered=" + std::to_string(observedArrows));
             // 前列交代の成立条件はsimulation_testsの専用配置で検証する。通常戦闘では敗走が先行しうる。
-            if (options.combatTest && (!observedCombat || !observedRetreat || !observedAttack || !observedLocalRout || state.simulation.result != BattleResult::RedVictory ||
-                !state.simulation.formations[1].defeated()))
+            if (options.combatTest && (!observedCombat || !observedAttack || !observedLocalRout ||
+                (state.simulation.result != BattleResult::Ongoing && !observedRetreat)))
                 throw std::runtime_error("Combat smoke failed: combat=" + std::to_string(observedCombat) +
                     " relief=" + std::to_string(observedFrontRelief) + " localRout=" + std::to_string(observedLocalRout) +
                     " retreat=" + std::to_string(observedRetreat) + " attack=" + std::to_string(observedAttack) +

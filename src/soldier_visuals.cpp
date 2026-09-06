@@ -211,7 +211,7 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
             for (unsigned group = 0; group < 25; ++group) {
                 if (formation.groupUnit(group) == UnitType::Archer) continue;
                 const auto& unit = formation.organization.smallGroups[group];
-                if (unit.routed || unit.route == SmallGroupRoute::Returning || unit.route == SmallGroupRoute::ReliefReserve ||
+                if (unit.routed || unit.resting || unit.route == SmallGroupRoute::Returning || unit.route == SmallGroupRoute::ReliefReserve ||
                     unit.route == SmallGroupRoute::ReliefWithdraw || (unit.attackTarget >= 0 && !unit.canAttack)) continue;
                 const auto p = formation.groupPosition(group);
                 int targetGroup = unit.attackTarget;

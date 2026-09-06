@@ -511,14 +511,20 @@ int wmain(int argc, wchar_t** argv) {
         SoldierVisuals flankingVisuals;
         flankingVisuals.update(flanking);
         flanking.toggle();
+        bool observedFlank = false;
         for (unsigned step = 0; step < 600; ++step) {
             flanking.update(1.0f / 60);
             flankingVisuals.update(flanking);
+            const auto& soldier = flankingVisuals.soldiers[43 * 71];
+            const auto slot = SoldierVisuals::offset(43 * 71);
+            if (soldier.position.x < slot.x - 5.9f && soldier.position.z > flanking.formations[0].z + slot.y + 3 && soldier.walking) {
+                observedFlank = true; break;
+            }
         }
         const unsigned flankSoldier = 43 * 71;
         const auto& flanker = flankingVisuals.soldiers[flankSoldier];
         const auto base = SoldierVisuals::offset(flankSoldier);
-        require(flanker.smallGroup == 15 && flanker.position.x < base.x - 5.9f &&
+        require(observedFlank && flanker.smallGroup == 15 && flanker.position.x < base.x - 5.9f &&
             flanker.position.z > flanking.formations[0].z + base.y + 3,
             "Soldier did not follow its small group's flank route");
         require(flanker.life == SoldierLife::Alive && flanker.walking,

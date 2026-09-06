@@ -105,8 +105,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 relief = {};
             }
             const unsigned lane = sideIndex * 4;
-            if (relief.front < 0 && contact && f.maneuverEnabled &&
-                std::abs(alongX ? enemy.z - f.z : enemy.x - f.x) <= 2) {
+            if (relief.front < 0 && contact && f.maneuverEnabled) {
                 const unsigned rank = sign > 0 ? 4 : 0;
                 const unsigned frontSlot = alongX ? lane * 5 + rank : rank * 5 + lane;
                 const unsigned rearSlot = alongX ? lane * 5 + (sign > 0 ? 3 : 1) : (sign > 0 ? 3 : 1) * 5 + lane;
@@ -125,10 +124,11 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     const bool ready = b.route == SmallGroupRoute::None ||
                         ((b.route == SmallGroupRoute::Outward || b.route == SmallGroupRoute::Forward) &&
                             b.routeAlongX == alongX && b.routeForward * sign > 0);
-                    if (!a.routed && !b.routed && a.approachX == 0 && a.approachZ == 0 && b.approachX == 0 && b.approachZ == 0 &&
+                    if (!a.routed && !a.resting && !b.routed && a.approachX == 0 && a.approachZ == 0 && b.approachX == 0 && b.approachZ == 0 &&
                         a.route == SmallGroupRoute::None && a.offsetX == 0 && a.offsetZ == 0 && a.strength > 0 &&
-                        (a.fatigue >= 8 || a.strength <= a.nominalStrength * 0.5f || a.morale <= 30) && ready &&
-                        b.fatigue <= 2 && b.strength > b.nominalStrength * 0.5f && b.morale > 30) {
+                        (a.fatigue >= 8 || a.strength <= a.nominalStrength * 0.75f || a.morale <= 50) && ready &&
+                        !b.resting && b.fatigue <= 2 && b.strength > b.nominalStrength * 0.5f && b.morale > 40 &&
+                        f.groupUnit(reserve) != UnitType::Archer) {
                         relief = {front, reserve, 0, alongX, sign * 5.2f};
                         a.route = SmallGroupRoute::ReliefWithdraw; b.route = SmallGroupRoute::ReliefReserve;
                         a.routeAlongX = b.routeAlongX = alongX;
@@ -149,6 +149,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 std::swap(a.slot, b.slot);
                 a.offsetX = a.offsetZ = b.offsetX = b.offsetZ = 0;
                 a.route = b.route = SmallGroupRoute::None;
+                a.resting = true;
                 relief = {};
             }
         }
@@ -167,7 +168,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     const unsigned slot = alongX ? lane * 5 + rank : rank * 5 + lane;
                     auto& g = *std::find_if(f.organization.smallGroups.begin(), f.organization.smallGroups.end(),
                         [slot](const SmallGroup& group) { return group.slot == slot; });
-                    if (g.routed || g.approachX != 0 || g.approachZ != 0 || g.route != SmallGroupRoute::None || g.fatigue > 2 || g.strength <= g.nominalStrength * 0.5f || g.morale <= 30 || g.offsetX != 0 || g.offsetZ != 0 ||
+                    if (g.routed || g.resting || f.groupUnit(static_cast<unsigned>(&g - f.organization.smallGroups.data())) == UnitType::Archer || g.approachX != 0 || g.approachZ != 0 || g.route != SmallGroupRoute::None || g.fatigue > 2 || g.strength <= g.nominalStrength * 0.5f || g.morale <= 30 || g.offsetX != 0 || g.offsetZ != 0 ||
                         g.state == SmallGroupState::Engaged) continue;
                     g.route = SmallGroupRoute::Outward; g.routeAlongX = alongX;
                     g.routeForward = sign * (6.8f + depth * 5.2f);
@@ -216,6 +217,10 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 continue;
             }
             g.targetOffsetX = g.offsetX; g.targetOffsetZ = g.offsetZ;
+            if (g.resting) {
+                g.state = SmallGroupState::Waiting;
+                continue;
+            }
             g.state = f.defeated() ? SmallGroupState::Retreating :
                 f.moving ? SmallGroupState::Advancing : SmallGroupState::Waiting;
             const auto p = positions[team][id];
@@ -500,7 +505,7 @@ void BattleSimulation::step(float seconds) {
         g.activeOpponents = {};
         g.canAttack = false;
         g.combatWait = CombatWait::NoTarget;
-        if (g.routed || g.strength <= 0) continue;
+        if (g.routed || g.resting || g.strength <= 0) continue;
         const bool ranged = formations[team].groupUnit(id) == UnitType::Archer;
         float nearest = ranged ? BowProfile::maxRange : 16;
         bool targetBlocked = true;
@@ -599,7 +604,7 @@ void BattleSimulation::step(float seconds) {
             auto& g = f.organization.smallGroups[id];
             const float loss = std::min(g.strength, damage[i][id]);
             g.strength = std::max(0.0f, g.strength - loss);
-            if (loss > 0) g.morale = std::max(0.0f, g.morale - loss * 2 - seconds * 0.5f);
+            if (loss > 0) { g.morale = std::max(0.0f, g.morale - loss * 2 - seconds * 0.5f); g.lastDamageTime = time; }
             actualLoss += loss;
         }
         if (formationsTouch || localContact) { f.moving = false; f.state = FormationState::Engaged; }
@@ -616,7 +621,7 @@ void BattleSimulation::updateFaceDeployments(float seconds) {
     }
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
         auto& g = formations[team].organization.smallGroups[id];
-        if (g.routed || g.strength <= 0 || result != BattleResult::Ongoing) { g.faceDeployment = {}; g.activeFighters = 0; g.activeOpponents = {}; continue; }
+        if (g.routed || g.resting || g.strength <= 0 || result != BattleResult::Ongoing) { g.faceDeployment = {}; g.activeFighters = 0; g.activeOpponents = {}; continue; }
         const bool returning = g.route == SmallGroupRoute::Returning || g.route == SmallGroupRoute::ReliefReserve || g.route == SmallGroupRoute::ReliefWithdraw;
         const auto fronts = returning ? ContactFronts{} : measureContactFronts(bodies, team, id);
         advanceFaceDeployment(g.faceDeployment, allocateContactFronts(fronts, g.strength), g.strength, seconds);
@@ -666,7 +671,7 @@ void BattleSimulation::updateArrows(float seconds, std::array<std::array<float, 
         auto& group = formation.organization.smallGroups[id];
         if (formation.groupUnit(id) != UnitType::Archer) continue;
         group.shotCooldown = std::max(0.0f, group.shotCooldown - seconds);
-        if (group.routed || group.strength <= 0 || formation.defeated()) continue;
+        if (group.routed || group.resting || group.strength <= 0 || formation.defeated()) continue;
         group.combatWait = CombatWait::OutOfRange;
         if (group.attackTarget < 0) continue;
         const auto p = formation.groupPosition(id), q = formations[1 - team].groupPosition(group.attackTarget);
@@ -720,10 +725,11 @@ unsigned BattleSimulation::nearbyRouts(unsigned team, unsigned group) const {
 }
 void BattleSimulation::updateRouts(float seconds) {
     if (result != BattleResult::Ongoing) return;
+    const auto beforeRouts = formations;
     std::array<bool, 2> broken{};
     for (unsigned team = 0; team < 2; ++team) {
         auto& f = formations[team];
-        const auto& enemy = formations[1 - team];
+        const auto& enemy = beforeRouts[1 - team];
         // 刻みの開始時の敗走者と実位置だけを参照し、同じ刻みで連鎖を再帰させない。
         std::array<unsigned, 25> nearbyCounts{};
         for (unsigned id = 0; id < 25; ++id) nearbyCounts[id] = nearbyRouts(team, id);
@@ -733,8 +739,23 @@ void BattleSimulation::updateRouts(float seconds) {
         for (unsigned id = 0; id < 25; ++id) {
             auto& g = f.organization.smallGroups[id];
             if (g.routed) continue;
-            g.morale = std::max(0.0f, g.morale - nearbyCounts[id] * 6.0f * seconds);
+            // 同時に複数小組が崩れても、一瞬で周囲の士気を使い切らない。
+            g.morale = std::max(0.0f, g.morale - std::min(nearbyCounts[id], 1u) * 6.0f * seconds);
+            if (g.resting) {
+                bool safe = nearbyCounts[id] == 0 && time - g.lastDamageTime >= 3;
+                for (unsigned other = 0; other < 25 && safe; ++other)
+                    if (!enemy.organization.smallGroups[other].routed && enemy.organization.smallGroups[other].strength > 0 &&
+                        battleDistance(f.groupPosition(id), enemy.groupPosition(other)) < 10) safe = false;
+                if (safe) {
+                    g.morale = std::min(100.0f, g.morale + 3 * seconds);
+                    g.fatigue = std::max(0.0f, g.fatigue - seconds);
+                    if (g.morale >= 70 && g.fatigue <= 2) g.resting = false;
+                }
+            }
             if (g.morale > 20 && g.strength > g.nominalStrength * 0.25f) continue;
+            // 交代後退中と休息中は、士気の軽い下振れだけで敗走を確定しない。
+            if ((g.route == SmallGroupRoute::ReliefWithdraw || g.resting) && g.morale > 10 &&
+                g.strength > g.nominalStrength * .25f) continue;
             const auto position = f.groupPosition(id);
             g.routed = true; g.routShock = 8; g.route = SmallGroupRoute::None; g.attackTarget = -1;
             g.detourTarget = -1;
@@ -750,7 +771,9 @@ void BattleSimulation::updateRouts(float seconds) {
         float morale = 0;
         for (const auto& g : f.organization.smallGroups) morale += g.routed ? 0 : g.morale;
         f.morale = morale / 25;
-        broken[team] = f.routedGroups() >= 13;
+        const bool exhausted = f.routedGroups() >= 13 && f.readyGroups() <= 5;
+        f.withdrawalPressure = exhausted ? f.withdrawalPressure + seconds : std::max(0.0f, f.withdrawalPressure - 2 * seconds);
+        broken[team] = f.withdrawalPressure >= 6;
     }
     if (!broken[0] && !broken[1]) return;
     result = broken[0] && broken[1] ? BattleResult::Draw : broken[0] ? BattleResult::BlueVictory : BattleResult::RedVictory;

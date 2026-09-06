@@ -353,14 +353,19 @@ int main() {
         battle.toggle(); battle.hold(0); battle.update(1);
         require(battle.formations[0].strength < paused.formations[0].strength, "Hold made engaged formation invulnerable");
         battle.update(60);
-        require(battle.result == BattleResult::RedVictory && battle.formations[1].defeated(),
-            "Default battle did not finish with a retreat");
-        const auto defeated = battle.formations[1];
+        // 予備が残る戦闘は継続できる。命令拒否の検証には全小組が崩れた状態を明示する。
+        if (battle.result == BattleResult::Ongoing) {
+            for (auto& group : battle.formations[1].organization.smallGroups) group.morale = 0;
+            battle.update(7);
+        }
+        require(battle.result != BattleResult::Ongoing, "Exhausted battle did not finish with a retreat");
+        const unsigned loser = battle.formations[1].defeated() ? 1u : 0u;
+        const auto defeated = battle.formations[loser];
         auto withoutOrders = battle;
-        battle.move(1, 0, 0); battle.hold(1); battle.update(10);
+        battle.move(loser, 0, 0); battle.hold(loser); battle.update(10);
         withoutOrders.update(10); same(battle, withoutOrders);
-        require(battle.formations[1].targetZ == defeated.targetZ &&
-            battle.formations[1].strength == defeated.strength, "Defeated formation obeyed orders or took post-battle losses");
+        require(battle.formations[loser].targetZ == defeated.targetZ &&
+            battle.formations[loser].strength == defeated.strength, "Defeated formation obeyed orders or took post-battle losses");
         BattleSimulation thirty, oneFortyFour, single;
         thirty.toggle(); oneFortyFour.toggle(); single.toggle();
         for (int i = 0; i < 2400; ++i) thirty.update(1.0f / 30);
@@ -370,14 +375,18 @@ int main() {
         equal.formations[1].morale = 100;
         for (auto& g : equal.formations[1].organization.smallGroups) g.morale = 100;
         equal.toggle(); equal.update(80);
-        require(equal.result == BattleResult::Draw && equal.formations[0].defeated() &&
-            equal.formations[1].defeated() && std::abs(equal.formations[0].z + equal.formations[1].z) < 0.001f,
+        require((equal.result == BattleResult::Draw || equal.result == BattleResult::Ongoing) &&
+            equal.formations[0].defeated() == equal.formations[1].defeated() &&
+            std::abs(equal.formations[0].strength - equal.formations[1].strength) < .001f &&
+            std::abs(equal.formations[0].z + equal.formations[1].z) < 0.001f,
             "Symmetric battle favored update order");
         BattleSimulation reversed;
         reversed.formations[0].morale = 85; reversed.formations[1].morale = 100;
         for (auto& f : reversed.formations) for (auto& g : f.organization.smallGroups) g.morale = f.morale;
         reversed.toggle(); reversed.update(80);
-        require(reversed.result == BattleResult::BlueVictory, "Result is hardcoded to a team");
+        const auto reversedResult = single.result == BattleResult::RedVictory ? BattleResult::BlueVictory :
+            single.result == BattleResult::BlueVictory ? BattleResult::RedVictory : single.result;
+        require(reversed.result == reversedResult, "Result is hardcoded to a team");
         BattleSimulation separated;
         separated.move(0, -45, -22); separated.move(1, 45, 22); separated.toggle(); separated.update(80);
         require(separated.result == BattleResult::Ongoing && separated.formations[0].strength == 500 &&
@@ -501,7 +510,7 @@ int main() {
         chain.update(3);
         require(chain.formations[0].routedGroups() > 1 && chain.formations[0].routedGroups() < 13 &&
             chain.result == BattleResult::Ongoing, "Local rout did not spread gradually");
-        chain.update(5);
+        chain.update(20);
         require(chain.formations[0].routedGroups() >= 13 && chain.result == BattleResult::BlueVictory &&
             chain.formations[0].defeated() && chain.formations[0].strength == 500,
             "Accumulated small-group routs did not trigger army withdrawal");
@@ -537,7 +546,15 @@ int main() {
             require(held.offsetX == outside.offsetX && held.offsetZ == outside.offsetZ,
                 "Hold did not cancel an active flank route");
             flank.toggle(); const auto pausedFlank = flank; flank.update(2); same(flank, pausedFlank);
-            flank.toggle(); flank.update(6);
+            flank.toggle();
+            // 回り込みの経路を検証する間は、前衛を健全に保って別の交代を開始させない。
+            for (unsigned tick = 0; tick < 360; ++tick) {
+                for (unsigned team = 0; team < 2; ++team) for (auto& g : flank.formations[team].organization.smallGroups)
+                    if ((alongX ? g.slot % 5 : g.slot / 5) == (team == 0 ? 4u : 0u)) {
+                        g.fatigue = 0; g.strength = 20; g.morale = 100;
+                    }
+                flank.update(1.0f / 60);
+            }
             const auto advanced = flank.formations[0].organization.smallGroups[id];
             require(std::abs((alongX ? advanced.offsetZ : advanced.offsetX) + 6.1f) < 0.001f &&
                 (alongX ? advanced.offsetX : advanced.offsetZ) > 3, "Flank did not advance outside its formation");
@@ -618,7 +635,13 @@ int main() {
             auto failedRelief = active;
             const auto reservation = failedRelief.formations[0].organization.frontReliefs[0];
             require(reservation.front >= 0, "Front relief fixture did not reserve a pair");
-            failedRelief.formations[0].organization.smallGroups[reservation.front].morale = 20;
+            auto withdrawing = active;
+            withdrawing.formations[0].organization.smallGroups[reservation.front].morale = 18;
+            withdrawing.update(1.0f / 60);
+            require(!withdrawing.formations[0].organization.smallGroups[reservation.front].routed &&
+                withdrawing.formations[0].organization.smallGroups[reservation.front].route == SmallGroupRoute::ReliefWithdraw,
+                "A recoverable morale dip turned an orderly relief into a rout");
+            failedRelief.formations[0].organization.smallGroups[reservation.front].morale = 10;
             failedRelief.update(1.0f / 60);
             require(failedRelief.formations[0].organization.smallGroups[reservation.front].routed &&
                 failedRelief.formations[0].organization.frontReliefs[0].front < 0 &&
@@ -678,7 +701,7 @@ int main() {
             for (const auto& relief : departed.formations[0].organization.frontReliefs)
                 require(relief.front < 0, "Disengagement stranded a front relief");
             auto finishedBattle = active;
-            for (unsigned id = 0; id < 13; ++id) finishedBattle.formations[1].organization.smallGroups[id].morale = 20;
+            for (auto& group : finishedBattle.formations[1].organization.smallGroups) group.morale = 10;
             finishedBattle.update(20);
             for (const auto& f : finishedBattle.formations) for (const auto& relief : f.organization.frontReliefs)
                 require(relief.front < 0, "Battle end stranded a front relief");

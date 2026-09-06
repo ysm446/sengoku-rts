@@ -31,6 +31,7 @@ struct Formation {
     bool detourExiting = false;
     float exitX = 0, exitZ = 0;
     UnitType unit = UnitType::Spearman;
+    float withdrawalPressure = 0;
     UnitType groupUnit(unsigned id) const { return organization.smallGroups.at(id).unit.value_or(unit); }
     bool defeated() const { return state == FormationState::Retreating || state == FormationState::Routed; }
     BattlePoint groupPosition(unsigned id) const {
@@ -42,6 +43,12 @@ struct Formation {
     unsigned routedGroups() const {
         unsigned count = 0;
         for (const auto& g : organization.smallGroups) count += g.routed;
+        return count;
+    }
+    unsigned readyGroups() const {
+        unsigned count = 0;
+        for (const auto& g : organization.smallGroups)
+            count += !g.routed && !g.resting && g.strength > g.nominalStrength * .5f && g.morale > 40 && g.fatigue < 8;
         return count;
     }
 };
