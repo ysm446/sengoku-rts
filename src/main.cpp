@@ -2,6 +2,7 @@
 #include "audio.h"
 #include "resource.h"
 #include "historical_window.h"
+#include "battle_clock.h"
 #include <shellapi.h>
 #include <windowsx.h>
 #include <chrono>
@@ -46,6 +47,7 @@ struct WindowState {
     bool drillEnabled = false;
     FormationDrill drill;
     BattleSimulation simulation;
+    BattleClock battleClock;
     const Scene* scene = nullptr;
     int selected = -1;
     int selectedGroup = -1;
@@ -282,7 +284,6 @@ Options parseOptions() {
     int count = 0;
     auto* args = CommandLineToArgvW(GetCommandLineW(), &count);
     if (!args) throw std::runtime_error("CommandLineToArgvW failed");
-    options.historical = count == 1;
     try {
         for (int i = 1; i < count; ++i) {
             const std::wstring arg = args[i];
@@ -578,13 +579,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             } else if (options.combatTest) {
                 // 描画間にも個体状態を更新し、接敵・補充・攻撃を通常実行に近い間隔で確認する。
                 for (unsigned step = 0; step < 10; ++step) {
-                    state.simulation.update(0.1f);
+                    state.battleClock.advance(state.simulation, *activeScene.individuals, 0.1f);
                     updateSceneSprites(activeScene, state.simulation, state.camera, state.selected, state.selectedGroup);
                     observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
                     for (const auto& f : state.simulation.formations) for (unsigned id = 0; id < 25; ++id)
                         observedFrontRelief |= f.organization.smallGroups[id].slot != id;
                 }
-            } else state.simulation.update(simulationDt);
+            } else state.battleClock.advance(state.simulation, *activeScene.individuals, simulationDt);
             observedCombat |= state.simulation.formations[0].state == FormationState::Engaged;
             observedRetreat |= state.simulation.formations[1].state == FormationState::Retreating;
             if (options.combatTest && !observedLocalRout && state.simulation.result == BattleResult::Ongoing)

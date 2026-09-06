@@ -1,4 +1,5 @@
 #include "scene.h"
+#include "battle_clock.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -58,6 +59,25 @@ int main(){
             }
         }
         require(observed,"No sword attacks were displayed");
+        BattleSimulation timedA,timedB;timedA.reset(UnitType::Samurai);timedB.reset(UnitType::Samurai);
+        timedA.running=timedB.running=true;
+        SoldierVisuals timedVisualA,timedVisualB;BattleClock clockA,clockB;
+        clockA.advance(timedA,timedVisualA,0);clockB.advance(timedB,timedVisualB,0);
+        timedVisualA.soldiers[1].position=timedVisualA.soldiers[0].position;
+        timedVisualB.soldiers[1].position=timedVisualB.soldiers[0].position;
+        for(unsigned frame=0;frame<60;++frame)clockA.advance(timedA,timedVisualA,1.0/30);
+        for(unsigned frame=0;frame<288;++frame)clockB.advance(timedB,timedVisualB,1.0/144);
+        require(timedA.time==timedB.time,"Battle clock depends on rendering frequency");
+        for(unsigned id=0;id<timedVisualA.soldiers.size();++id) {
+            const auto& left=timedVisualA.soldiers[id];const auto& right=timedVisualB.soldiers[id];
+            require(left.position.x==right.position.x && left.position.z==right.position.z && left.heading==right.heading &&
+                left.followSpeed==right.followSpeed && left.animationTime==right.animationTime,"Individual updates depend on rendering frequency");
+        }
+        timedA.running=false;const auto pausedTime=timedA.time;clockA.advance(timedA,timedVisualA,5);
+        require(timedA.time==pausedTime,"Paused clock advanced battle");
+        timedA.running=true;clockA.advance(timedA,timedVisualA,.01);timedA.reset(UnitType::Samurai);timedA.running=true;
+        clockA.advance(timedA,timedVisualA,.025);
+        require(timedA.time==0,"Reset clock retained elapsed time");
         // 持ち場を離しても表示兵士が瞬間的に吸い寄せられず、停止後は整列する。
         for(const auto type:{UnitType::Spearman,UnitType::Samurai}) {
             BattleSimulation following;following.reset(type);
@@ -111,6 +131,19 @@ int main(){
         require(std::isfinite(overlap.soldiers[0].position.x) &&
             std::abs(overlap.soldiers[1].position.x-overlap.soldiers[0].position.x-SoldierVisuals::minimumSpacing)<.0001f,
             "Coincident soldiers could not separate");
+        for(float interval:{1.0f/30,1.0f/60,1.0f/120,1.0f/240}) {
+            overlap.soldiers[0].position=overlap.soldiers[1].position={0,0,0};
+            overlap.separateOverlaps(0);
+            require(overlap.soldiers[0].position.x==0,"Paused collision moved a soldier");
+            for(unsigned step=0;step<8;++step) {
+                const auto before=overlap.soldiers[0].position;
+                overlap.separateOverlaps(interval);
+                require(std::abs(overlap.soldiers[0].position.x-before.x)<=SoldierVisuals::minimumSpacing*30*interval+.0001f,
+                    "Collision push exceeded elapsed-time limit");
+            }
+            require(std::abs(overlap.soldiers[1].position.x-overlap.soldiers[0].position.x-SoldierVisuals::minimumSpacing)<.0001f,
+                "Collision did not converge at this update interval");
+        }
         std::cout<<"PASS: melee reach, facing, movement and visual collision\n";return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }
