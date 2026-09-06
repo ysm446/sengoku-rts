@@ -18,7 +18,7 @@ struct Metrics {
     unsigned routed=0;
 };
 struct Sample { std::array<Metrics,2> armies; double elapsed=0; int winner=-1; };
-Sample measure(unsigned configuration,bool swapped,unsigned duration) {
+Sample measure(unsigned configuration,bool swapped,unsigned duration,bool restReport=false) {
     auto battle=std::make_unique<BattleSimulation>();battle->reset(UnitType::Spearman,true);
     if(configuration>0) for(auto& f:battle->formations) { f.morale=100;for(auto& g:f.organization.smallGroups)g.morale=100; }
     if(configuration==2) for(auto& f:battle->formations)f.x=f.targetX=0;
@@ -43,6 +43,13 @@ Sample measure(unsigned configuration,bool swapped,unsigned duration) {
                 require(std::isfinite(g.strength) && g.strength>=0 && g.strength<=old.strength+.0001f,"Long battle regenerated casualties");
                 require(std::isfinite(g.fatigue) && g.fatigue>=0 && g.fatigue<=30,"Long battle has invalid fatigue");
                 total+=g.strength;
+                if(restReport && g.resting && (!old.resting || tick%60==0)) {
+                    float nearest=10000;
+                    for(unsigned other=0;other<25;++other)if(!enemy.organization.smallGroups[other].routed && enemy.organization.smallGroups[other].strength>0)
+                        nearest=std::min(nearest,battleDistance(f.groupPosition(id),enemy.groupPosition(other)));
+                    std::cout<<battle->time<<','<<team<<','<<id<<','<<g.morale<<','<<g.fatigue<<','<<g.strength<<','<<nearest<<','
+                        <<battle->time-g.lastDamageTime<<','<<battle->nearbyRouts(team,id)<<','<<g.routed<<','<<g.restRelocating<<','<<g.restBlocked<<'\n';
+                }
                 if(!g.routed && !g.resting && (alongX?g.slot%5:g.slot/5)==frontRank &&
                     (g.fatigue>=8 || g.strength<=g.nominalStrength*.75f || g.morale<=50)) {
                     stats.wornFrontSeconds+=dt;
@@ -106,8 +113,12 @@ void row(unsigned configuration,bool swapped,unsigned team,const Sample& sample)
 }
 int main(int argc,char** argv) {
     try {
+        if(argc==2 && std::string_view(argv[1])=="--rest-report") {
+            std::cout<<"seconds,team,group,morale,fatigue,strength,nearest_enemy,time_since_damage,nearby_routs,routed,relocating,blocked\n"<<std::fixed<<std::setprecision(3);
+            measure(0,false,180,true);return 0;
+        }
         const bool report=argc==2 && std::string_view(argv[1])=="--report";
-        require(argc==1 || report,"Usage: mixed_battle_tests [--report]");
+        require(argc==1 || report,"Usage: mixed_battle_tests [--report|--rest-report]");
         if(report)std::cout<<"configuration,swapped,team,seconds,winner,strength,routed,exchanges,rest_started,rest_completed,reused,disengaged,regrouped,charges,attack_group_seconds,rest_group_seconds,blocked_group_seconds,fatigue_recovered,mean_attack_efficiency,relief_started,relief_aborted,front_rout_aborts,reserve_rout_aborts,worn_front_group_seconds,displaced_worn_front_group_seconds,last_attack_s\n"<<std::fixed<<std::setprecision(3);
         for(unsigned configuration=0;configuration<(report?3u:1u);++configuration) {
             const auto original=measure(configuration,false,report?180:30),swapped=measure(configuration,true,report?180:30);

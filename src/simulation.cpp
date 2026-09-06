@@ -29,6 +29,7 @@ void BattleSimulation::move(unsigned index, float x, float z) {
     for (auto& g : formation.organization.smallGroups) {
         g.approachSpeed = g.chargeDistance = g.chargeWindow = 0;
         g.cavalry = {}; g.cavalry.handledCharge = g.charges;
+        g.restRelocating=false;g.restBlocked=false;
     }
 }
 void BattleSimulation::hold(unsigned index) {
@@ -146,7 +147,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
         for (unsigned sideIndex = 0; sideIndex < f.organization.frontReliefs.size(); ++sideIndex) {
             auto& relief = f.organization.frontReliefs[sideIndex];
             if (relief.front >= 0 && (result != BattleResult::Ongoing ||
-                (relief.corridorGroups && (!contact || relief.alongX != alongX || relief.forward * sign < 0)) || f.organization.smallGroups[relief.front].routed ||
+                ((relief.corridorGroups || relief.displaced) && (!contact || relief.alongX != alongX || relief.forward * sign < 0)) || f.organization.smallGroups[relief.front].routed ||
                 f.organization.smallGroups[relief.reserve].routed)) {
                 // 敗走・戦闘終了で交代予約を解除する。残存小組は現在位置から通常の復帰を行う。
                 for (int id : {relief.front, relief.reserve}) {
@@ -161,6 +162,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             }
             const unsigned lane = sideIndex < 2 ? sideIndex * 4 : sideIndex - 1;
             if (relief.front < 0 && contact && f.maneuverEnabled) {
+                if (std::any_of(f.organization.frontReliefs.begin(),f.organization.frontReliefs.end(),
+                    [](const FrontRelief& r){return r.front>=0 && r.displaced;})) continue;
                 const unsigned rank = sign > 0 ? 4 : 0;
                 const unsigned frontSlot = alongX ? lane * 5 + rank : rank * 5 + lane;
                 const unsigned rearSlot = alongX ? lane * 5 + (sign > 0 ? 3 : 1) : (sign > 0 ? 3 : 1) * 5 + lane;
@@ -176,6 +179,42 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 if (!occupied && front >= 0 && reserve >= 0) {
                     auto& a = f.organization.smallGroups[front];
                     auto& b = f.organization.smallGroups[reserve];
+                    const bool displaced = a.approachX!=0 || a.approachZ!=0 || a.offsetX!=0 || a.offsetZ!=0 ||
+                        b.approachX!=0 || b.approachZ!=0 || b.offsetX!=0 || b.offsetZ!=0;
+                    const bool busy=std::any_of(f.organization.frontReliefs.begin(),f.organization.frontReliefs.end(),
+                        [](const FrontRelief& r){return r.front>=0;});
+                    if (displaced && !busy && !a.routed && !a.resting && !b.routed && !b.resting &&
+                        a.route==SmallGroupRoute::None && b.route==SmallGroupRoute::None &&
+                        a.cavalry.phase==CavalryPhase::None && b.cavalry.phase==CavalryPhase::None &&
+                        a.strength>0 && (a.fatigue>=8 || a.strength<=a.nominalStrength*.75f || a.morale<=50) &&
+                        b.fatigue<=2 && b.strength>b.nominalStrength*.5f && b.morale>40 && f.groupUnit(reserve)!=UnitType::Archer) {
+                        const auto head=positions[team][front],rear=positions[team][reserve];
+                        const float clearance=4.5f+3*movementLimit*seconds;
+                        const auto clear=[&](Point from,Point to,Point stationary) {
+                            if (std::abs(to.x)>76 || std::abs(to.z)>76 || segmentDistance(from,to,stationary)<clearance) return false;
+                            for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
+                                if ((t==team && (other==static_cast<unsigned>(front) || other==static_cast<unsigned>(reserve))) ||
+                                    formations[t].organization.smallGroups[other].strength<=0) continue;
+                                if(segmentDistance(from,to,positions[t][other])<clearance)return false;
+                            }
+                            return true;
+                        };
+                        const float preferred=(lane<=2?-1.0f:1.0f)*(sideIndex>=2?5.2f:6.1f);
+                        if ((alongX?head.x-rear.x:head.z-rear.z)*sign>=clearance && battleDistance(head,rear)<=16)
+                            for(float side:{preferred,-preferred}) {
+                                const Point shift{alongX?0:side,alongX?side:0};
+                                const Point headSide{head.x+shift.x,head.z+shift.z},rearSide{rear.x+shift.x,rear.z+shift.z};
+                                if(!clear(rear,rearSide,head) || !clear(head,rear,rearSide) ||
+                                    !clear(rearSide,headSide,rear) || !clear(headSide,head,rear))continue;
+                                relief={front,reserve,0,alongX,sign*5.2f,side};relief.displaced=true;
+                                relief.head={head.x-f.x,head.z-f.z};relief.rear={rear.x-f.x,rear.z-f.z};
+                                for(auto* g:{&a,&b}) {
+                                    g->offsetX+=g->approachX;g->offsetZ+=g->approachZ;g->approachX=g->approachZ=0;
+                                    g->approachSpeed=g->chargeDistance=g->chargeWindow=0;g->detourTarget=-1;g->routeAlongX=alongX;
+                                }
+                                a.route=SmallGroupRoute::ReliefWithdraw;b.route=SmallGroupRoute::ReliefReserve;break;
+                            }
+                    }
                     const bool ready = b.route == SmallGroupRoute::None ||
                         ((b.route == SmallGroupRoute::Outward || b.route == SmallGroupRoute::Forward) &&
                             b.routeAlongX == alongX && b.routeForward * sign > 0);
@@ -281,6 +320,25 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             }
             auto& a = f.organization.smallGroups[relief.front];
             auto& b = f.organization.smallGroups[relief.reserve];
+            if (relief.displaced) {
+                const Point head{f.x+relief.head.x,f.z+relief.head.z},rear{f.x+relief.rear.x,f.z+relief.rear.z};
+                const Point headSide{head.x+(relief.alongX?0:relief.lateral),head.z+(relief.alongX?relief.lateral:0)};
+                const Point rearSide{rear.x+(relief.alongX?0:relief.lateral),rear.z+(relief.alongX?relief.lateral:0)};
+                if(relief.phase==0 && battleDistance(positions[team][relief.reserve],rearSide)<.001f)relief.phase=1;
+                if(relief.phase==1 && battleDistance(positions[team][relief.front],rear)<.001f)relief.phase=2;
+                if(relief.phase==2 && battleDistance(positions[team][relief.reserve],headSide)<.001f)relief.phase=3;
+                if(relief.phase==3 && battleDistance(positions[team][relief.reserve],head)<.001f) {
+                    std::swap(a.slot,b.slot);
+                    for(auto* g:{&a,&b}) {
+                        const auto destination=g==&a?relief.rear:relief.head;
+                        g->offsetX=destination.x-(static_cast<float>(g->slot%5)-2)*5.2f;
+                        g->offsetZ=destination.z-(static_cast<float>(g->slot/5)-2)*5.2f;
+                        g->route=SmallGroupRoute::None;
+                    }
+                    a.resting=true;relief={};
+                }
+                continue;
+            }
             const float side = relief.lateral;
             const float af = relief.alongX ? a.offsetX : a.offsetZ;
             const float bf = relief.alongX ? b.offsetX : b.offsetZ;
@@ -325,15 +383,17 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             }
         }
         const auto reservedForCentralRelief = [&](unsigned id, Point point) {
-            for (unsigned index = 2; index < f.organization.frontReliefs.size(); ++index) {
+            for (unsigned index = 0; index < f.organization.frontReliefs.size(); ++index) {
                 const auto& r = f.organization.frontReliefs[index];
+                if(index<2 && !r.displaced)continue;
                 if (r.front < 0 || r.front == static_cast<int>(id) || r.reserve == static_cast<int>(id) || (r.corridorGroups & (1u << id))) continue;
                 const auto base = [&](int group) {
                     const auto s = f.organization.smallGroups[group].slot;
                     return Point{f.x + (static_cast<float>(s % 5) - 2) * 5.2f,
                         f.z + (static_cast<float>(s / 5) - 2) * 5.2f};
                 };
-                const auto a = base(r.front), b = base(r.reserve);
+                const auto a = r.displaced?Point{f.x+r.head.x,f.z+r.head.z}:base(r.front);
+                const auto b = r.displaced?Point{f.x+r.rear.x,f.z+r.rear.z}:base(r.reserve);
                 const float dx = r.alongX ? 0 : r.lateral, dz = r.alongX ? r.lateral : 0;
                 const float margin = 4.5f + 3 * movementLimit * seconds;
                 if (point.x > std::min(a.x, b.x) + std::min(0.0f, dx) - margin &&
@@ -384,8 +444,62 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 continue;
             }
             g.targetOffsetX = g.offsetX; g.targetOffsetZ = g.offsetZ;
+            if(!g.resting) { g.restRelocating=false;g.restBlocked=false; }
             if (g.resting) {
                 g.state = SmallGroupState::Waiting;
+                if(f.moving) {g.restRelocating=false;g.restBlocked=false;continue;}
+                if(!f.maneuverEnabled || f.defeated() || result!=BattleResult::Ongoing)continue;
+                const auto p=positions[team][id];
+                const float clearance=4.5f+3*movementLimit*seconds;
+                const auto safe=[&](Point point) {
+                    if(std::abs(point.x)>76 || std::abs(point.z)>76)return false;
+                    for(unsigned other=0;other<25;++other) {
+                        const auto& foe=enemy.organization.smallGroups[other];
+                        if(!foe.routed && foe.strength>0 && battleDistance(point,positions[1-team][other])<12)return false;
+                        const auto& ally=f.organization.smallGroups[other];
+                        if(ally.routed && ally.routShock>0 && battleDistance(point,positions[team][other])<10)return false;
+                    }
+                    return true;
+                };
+                const auto clear=[&](Point target) {
+                    for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
+                        if((t==team && other==id) || formations[t].organization.smallGroups[other].strength<=0)continue;
+                        if(segmentDistance(p,target,positions[t][other])<clearance)return false;
+                    }
+                    return !reservedForCentralRelief(id,target);
+                };
+                Point threat{};float nearest=10000;
+                for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
+                    const auto& h=formations[t].organization.smallGroups[other];
+                    const float distance=battleDistance(p,positions[t][other]);
+                    const bool dangerous=t==team ? h.routed && h.routShock>0 && distance<=routRadius : !h.routed && h.strength>0 && distance<10;
+                    if(dangerous && distance<nearest) { nearest=distance;threat=positions[t][other]; }
+                }
+                if(g.restRelocating && (!safe(g.restDestination) || !clear(g.restDestination)))g.restRelocating=false;
+                g.restBlocked=false;
+                if(!g.restRelocating && nearest<10000) {
+                    const float heading=nearest>.001f?std::atan2(p.z-threat.z,p.x-threat.x):f.heading+3.14159265f;
+                    for(float distance:{6.1f,10.0f}) {
+                        for(float angle:{0.0f,.785398163f,-.785398163f,1.57079633f,-1.57079633f}) {
+                            const Point target{p.x+distance*std::cos(heading+angle),p.z+distance*std::sin(heading+angle)};
+                            if(!safe(target) || !clear(target))continue;
+                            g.restDestination=target;g.restRelocating=true;break;
+                        }
+                        if(g.restRelocating)break;
+                    }
+                    g.restBlocked=!g.restRelocating;
+                }
+                if(g.restRelocating) {
+                    const auto target=g.restDestination;const float distance=battleDistance(p,target);
+                    if(distance<.001f) { g.restRelocating=false;continue; }
+                    g.heading=turnToward(g.heading,std::atan2(target.z-p.z,target.x-p.x),combatProfile(f.groupUnit(id)).turnRate*seconds);
+                    const float alignment=((target.x-p.x)*std::cos(g.heading)+(target.z-p.z)*std::sin(g.heading))/distance;
+                    const float travel=alignment>=.95f?std::min(distance,f.speed*seconds):0;
+                    const Point next{p.x+(target.x-p.x)*travel/distance,p.z+(target.z-p.z)*travel/distance};
+                    if(reservedForCentralRelief(id,next)) { g.restBlocked=true;continue; }
+                    g.offsetX+=next.x-p.x;g.offsetZ+=next.z-p.z;
+                    if(travel>0)g.state=SmallGroupState::Retreating;
+                }
                 continue;
             }
             g.state = f.defeated() ? SmallGroupState::Retreating :
@@ -523,14 +637,25 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             const float side = g.routeLateral != 0 ? g.routeLateral : lane == 0 ? -6.1f : 6.1f;
             const float lateral = routeX ? g.offsetZ : g.offsetX;
             const float forward = routeX ? g.offsetX : g.offsetZ;
+            bool displacedRelief=false;
             if (relieving) {
                 g.flankClosing = false;
                 const auto reservation = std::find_if(f.organization.frontReliefs.begin(), f.organization.frontReliefs.end(),
                     [id](const FrontRelief& value) { return value.front == static_cast<int>(id) || value.reserve == static_cast<int>(id) || (value.corridorGroups & (1u << id)); });
                 if (reservation == f.organization.frontReliefs.end()) { g.route = SmallGroupRoute::Returning; continue; }
                 const auto& relief = *reservation;
+                displacedRelief=relief.displaced;
                 float targetForward = forward, targetLateral = lateral;
-                if (g.route == SmallGroupRoute::ReliefCorridor) {
+                if (relief.displaced) {
+                    Point target = g.route==SmallGroupRoute::ReliefWithdraw ? (relief.phase>=1?relief.rear:relief.head) :
+                        (relief.phase>=2?relief.head:relief.rear);
+                    if(g.route==SmallGroupRoute::ReliefReserve && relief.phase<3) {
+                        target.x+=routeX?0:relief.lateral;target.z+=routeX?relief.lateral:0;
+                    }
+                    const float x=target.x-(static_cast<float>(g.slot%5)-2)*5.2f;
+                    const float z=target.z-(static_cast<float>(g.slot/5)-2)*5.2f;
+                    targetForward=routeX?x:z;targetLateral=routeX?z:x;
+                } else if (g.route == SmallGroupRoute::ReliefCorridor) {
                     const float desired = relief.phase == 5 ? 0 : relief.corridorShift;
                     bool precedingReady = true;
                     for (unsigned other = 0; other < 25; ++other) if (relief.corridorGroups & (1u << other)) {
@@ -600,7 +725,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     if (otherTeam == team && other == id) continue;
                     if (formations[otherTeam].organization.smallGroups[other].strength <= 0) continue;
                     const auto q = positions[otherTeam][other];
-                    if (g.flankClosing ? segmentDistance(p,next,q) < clearance :
+                    if ((g.flankClosing || displacedRelief) ? segmentDistance(p,next,q) < clearance :
                         (std::abs(next.x - q.x) < clearance && std::abs(next.z - q.z) < clearance)) blocked = true;
                 }
             if (blocked) continue;
@@ -1148,7 +1273,7 @@ void BattleSimulation::updateRouts(float seconds) {
                 g.cavalry.phase==CavalryPhase::None && !g.canAttack &&
                 (f.groupUnit(id)!=UnitType::Archer || g.attackTarget<0);
             if (resting || idle) {
-                bool safe = nearbyCounts[id] == 0 && time - g.lastDamageTime >= 3;
+                bool safe = !f.moving && !g.restRelocating && nearbyCounts[id] == 0 && time - g.lastDamageTime >= 3;
                 for (unsigned other = 0; other < 25 && safe; ++other)
                     if (!enemy.organization.smallGroups[other].routed && enemy.organization.smallGroups[other].strength > 0 &&
                         battleDistance(f.groupPosition(id), enemy.groupPosition(other)) < 10) safe = false;
@@ -1164,6 +1289,7 @@ void BattleSimulation::updateRouts(float seconds) {
                 g.strength > g.nominalStrength * .25f) continue;
             const auto position = f.groupPosition(id);
             g.routed = true; g.routShock = 8; g.route = SmallGroupRoute::None; g.attackTarget = -1;
+            g.restRelocating=false;g.restBlocked=false;
             g.cavalry={};g.cavalry.handledCharge=g.charges;
             g.detourTarget = -1;
             g.approachX = g.approachZ = 0;

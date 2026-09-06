@@ -1,6 +1,7 @@
 #include "simulation.h"
 #include <iostream>
 #include <stdexcept>
+#include <memory>
 
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 BattleSimulation reserves() {
@@ -16,6 +17,43 @@ BattleSimulation reserves() {
 }
 int main() {
     try {
+        for(bool panic:{false,true})for(float sign:{-1.0f,1.0f}) {
+            auto refuge=std::make_unique<BattleSimulation>();
+            for(unsigned team=0;team<2;++team) {
+                auto& f=refuge->formations[team];f.x=f.targetX=team==0?-40.0f:40.0f;f.z=f.targetZ=0;
+                for(auto& g:f.organization.smallGroups) {g.offsetZ=1000;g.morale=100;}
+            }
+            refuge->hold(1);refuge->running=true;
+            auto& f=refuge->formations[0];auto& g=f.organization.smallGroups[12];
+            g.offsetX=-f.x;g.offsetZ=0;g.resting=true;g.morale=60;g.fatigue=10;g.strength=16;
+            g.heading=sign>0?3.14159265f:0;f.strength-=4;
+            if(panic) {
+                auto& source=f.organization.smallGroups[13];source.routed=true;source.routShock=8;
+                source.fleeX=source.fleeTargetX=sign*6;source.fleeZ=source.fleeTargetZ=0;
+            } else {
+                auto& enemy=refuge->formations[1].organization.smallGroups[12];enemy.offsetX=sign*8-refuge->formations[1].x;enemy.offsetZ=0;
+            }
+            refuge->update(1.0f/60);require(g.restRelocating,"Threatened resting group did not seek refuge");
+            auto frozen=std::make_unique<BattleSimulation>(*refuge);frozen->running=false;frozen->update(2);
+            require(battleDistance(frozen->formations[0].groupPosition(12),f.groupPosition(12))==0,"Pause moved resting group");
+            auto held=std::make_unique<BattleSimulation>(*refuge);held->hold(0);held->update(.5f);
+            require(battleDistance(held->formations[0].groupPosition(12),f.groupPosition(12))==0,"Hold moved resting group");
+            auto split=std::make_unique<BattleSimulation>(*refuge),whole=std::make_unique<BattleSimulation>(*refuge);
+            whole->update(1);for(unsigned tick=0;tick<60;++tick)split->update(1.0f/60);
+            require(battleDistance(whole->formations[0].groupPosition(12),split->formations[0].groupPosition(12))<.001f &&
+                whole->formations[0].organization.smallGroups[12].morale==split->formations[0].organization.smallGroups[12].morale,"Rest relocation depends on cadence");
+            bool completed=false;
+            for(unsigned tick=0;tick<2400;++tick) {
+                const auto before=f.groupPosition(12);refuge->update(1.0f/60);
+                require(battleDistance(before,f.groupPosition(12))<=f.speed/60+.001f,"Rest relocation teleported");
+                for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
+                    if(t==0 && other==12)continue;
+                    require(battleDistance(f.groupPosition(12),refuge->formations[t].groupPosition(other))>=4.5f,"Rest relocation crossed occupancy");
+                }
+                if(!g.resting) {completed=true;break;}
+            }
+            require(completed && !g.routed && g.morale>=70 && g.fatigue<=2 && g.strength==16,"Relocated group failed to recover without regenerating casualties");
+        }
         auto healthy = reserves(); healthy.update(10);
         require(healthy.formations[0].readyGroups() == 12 && healthy.result == BattleResult::Ongoing,
             "Healthy remaining troops were forced to withdraw by rout count alone");

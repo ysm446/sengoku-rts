@@ -20,6 +20,8 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
         for (unsigned id = 0; id < 25; ++id) {
             const auto& g = x.organization.smallGroups[id];
             const auto& h = y.organization.smallGroups[id];
+            require(g.restRelocating==h.restRelocating && g.restBlocked==h.restBlocked &&
+                g.restDestination.x==h.restDestination.x && g.restDestination.z==h.restDestination.z,"Rest relocation depends on update interval");
             require(g.cavalry.phase==h.cavalry.phase && g.cavalry.handledCharge==h.cavalry.handledCharge &&
                 g.cavalry.blocked==h.cavalry.blocked && g.cavalry.blockedSeconds==h.cavalry.blockedSeconds && g.cavalry.destination.x==h.cavalry.destination.x &&
                 g.cavalry.destination.z==h.cavalry.destination.z,"Cavalry tactics depend on update interval");
@@ -48,6 +50,8 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
         for (unsigned side = 0; side < x.organization.frontReliefs.size(); ++side) {
             const auto& g = x.organization.frontReliefs[side];
             const auto& h = y.organization.frontReliefs[side];
+            require(g.displaced==h.displaced && g.head.x==h.head.x && g.head.z==h.head.z &&
+                g.rear.x==h.rear.x && g.rear.z==h.rear.z,"Displaced relief depends on update interval");
             require(g.front == h.front && g.reserve == h.reserve && g.phase == h.phase &&
                 g.alongX == h.alongX && g.forward == h.forward && g.lateral == h.lateral &&
                 g.corridorGroups == h.corridorGroups && g.corridorShift == h.corridorShift, "Front relief depends on update interval");

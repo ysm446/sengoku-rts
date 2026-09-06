@@ -115,7 +115,8 @@ struct WindowState {
             L"組 小組" + std::to_wstring(selectedGroup + 1);
         const wchar_t* action = group.state == SmallGroupState::Fleeing ? (group.fleeBlocked ? L"敗走中・退路閉塞" : L"敗走中") :
             group.state == SmallGroupState::Routed ? L"敗走済" : group.route == SmallGroupRoute::Returning ? L"復帰中" :
-            group.route == SmallGroupRoute::ReliefCorridor ? L"交代通路を確保・復帰中" : group.resting ? L"後方で再集結中" : group.route == SmallGroupRoute::ReliefReserve ? L"前列交代中" :
+            group.route == SmallGroupRoute::ReliefCorridor ? L"交代通路を確保・復帰中" : group.resting ?
+                (group.restBlocked?L"休息場所への退路閉塞":group.restRelocating?L"安全な休息場所へ移動中":L"後方で再集結中") : group.route == SmallGroupRoute::ReliefReserve ? L"前列交代中" :
             group.route == SmallGroupRoute::ReliefWithdraw ? L"交代後退中" :
             group.cavalry.phase == CavalryPhase::Disengaging ? L"騎馬離脱中" :
             group.cavalry.phase == CavalryPhase::Regrouping ? L"騎馬再突撃準備中" :

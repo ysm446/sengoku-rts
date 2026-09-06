@@ -38,6 +38,8 @@ struct SmallGroup {
     float fatigue = 0;
     float attackEfficiency() const { return 1.0f - .02f * std::clamp(fatigue, 0.0f, 20.0f); }
     bool resting = false;
+    bool restRelocating = false, restBlocked = false;
+    BattlePoint restDestination{};
     double lastDamageTime = -10;
     float heading = 0;
     FaceDeployment faceDeployment;
@@ -84,6 +86,8 @@ struct FrontRelief {
     // 4: 通路を開く、5: 交代後に列を戻す。0〜3は既存の交代段階。
     unsigned corridorGroups = 0;
     float corridorShift = 0;
+    bool displaced = false;
+    BattlePoint head{}, rear{}; // 交代開始時の実位置（備中心からの相対座標）。
 };
 struct Company { unsigned firstGroup = 0, groupCount = 5, troop = 0; };
 struct Troop { unsigned firstCompany = 0, companyCount = 0; };
