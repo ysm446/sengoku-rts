@@ -148,8 +148,8 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     }
     if (options.mixed && scene.generatedSoldiers) {
         const auto directory = options.soldierSheet.parent_path();
-        for (unsigned bank = 1; bank < 3; ++bank) {
-            const std::wstring prefix = bank == 1 ? L"samurai" : L"archer";
+        for (unsigned bank = 1; bank < unitVisuals.size(); ++bank) {
+            const std::wstring prefix = unitVisual(static_cast<UnitType>(bank)).assetPrefix;
             const wchar_t* suffixes[] = {L"_idle.png", L"_walk.png", L"_attack.png"};
             const unsigned rows[] = {0, 1, Scene::attackRow};
             const unsigned frames[] = {1, Scene::walkFrames, Scene::attackFrames};
@@ -157,7 +157,7 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
                 const auto pixels = loadSpriteSheet(directory / (prefix + suffixes[animation]), Scene::tileWidth * 8, Scene::tileHeight * frames[animation]);
                 for (unsigned y = 0; y < Scene::tileHeight * frames[animation]; ++y)
                     std::copy_n(pixels.data() + y * Scene::tileWidth * 8, Scene::tileWidth * 8,
-                        scene.atlas.data() + (bank * Scene::atlasHeight / 3 + rows[animation] * Scene::tileHeight + y) * Scene::atlasWidth + 4 * Scene::tileWidth);
+                        scene.atlas.data() + (bank * Scene::unitTileCount / Scene::atlasColumns * Scene::tileHeight + rows[animation] * Scene::tileHeight + y) * Scene::atlasWidth + 4 * Scene::tileWidth);
             }
         }
     }

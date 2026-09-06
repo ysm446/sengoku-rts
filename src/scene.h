@@ -70,7 +70,7 @@ struct Scene {
     static constexpr unsigned unitTileCount = atlasColumns * (1 + walkFrames + attackFrames);
     static constexpr unsigned tileCount = unitTileCount * 3;
     static constexpr unsigned atlasWidth = tileWidth * atlasColumns;
-    static constexpr unsigned atlasHeight = tileHeight * (1 + walkFrames + attackFrames) * 3;
+    static constexpr unsigned atlasHeight = tileHeight * (1 + walkFrames + attackFrames) * 4;
     std::vector<TerrainVertex> terrain;
     std::vector<SpriteInstance> sprites;
     std::size_t routMarkerStart = 0;

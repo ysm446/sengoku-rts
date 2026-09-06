@@ -3,6 +3,16 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include "formation_drill.h"
+
+namespace {
+float groupMovementLimit(const std::array<Formation, 2>& formations) {
+    float speed = std::max(formations[0].speed, formations[1].speed);
+    for (const auto& f : formations) for (unsigned id = 0; id < 25; ++id)
+        if (f.groupUnit(id) == UnitType::Cavalry) speed = std::max(speed, movementProfile(UnitType::Cavalry).speed);
+    return speed;
+}
+}
 
 BattleSimulation::BattleSimulation() { reset(); }
 void BattleSimulation::move(unsigned index, float x, float z) {
@@ -16,6 +26,7 @@ void BattleSimulation::move(unsigned index, float x, float z) {
     // 隊列の半幅を含めて地形の内側に収める。
     formation.targetX = std::clamp(x, -60.0f, 60.0f);
     formation.targetZ = std::clamp(z, -60.0f, 60.0f);
+    for (auto& g : formation.organization.smallGroups) g.approachSpeed = g.chargeDistance = g.chargeWindow = 0;
 }
 void BattleSimulation::hold(unsigned index) {
     if (index >= formations.size()) throw std::invalid_argument("Invalid formation hold command");
@@ -26,6 +37,9 @@ void BattleSimulation::hold(unsigned index) {
     formation.maneuverEnabled = false;
     formation.movementBlocked = false;
     formation.detouring = false;
+    for (auto& g : formation.organization.smallGroups) {
+        g.approachSpeed = g.chargeDistance = g.chargeWindow = 0;
+    }
 }
 void BattleSimulation::reset(UnitType unit, bool mixedBattle) {
     const auto profile = meleeProfile(unit);
@@ -51,7 +65,8 @@ void BattleSimulation::reset(UnitType unit, bool mixedBattle) {
             const unsigned row = id / 5, column = id % 5;
             const bool rear = row == (red ? 0u : 4u);
             const bool sword = red ? column == 0 || column == 4 : row == 3 || (row == 2 && column > 0 && column < 4);
-            g.unit = rear ? UnitType::Archer : sword ? UnitType::Samurai : UnitType::Spearman;
+            const bool cavalry = (column == 0 || column == 4) && (red ? row >= 3 : row <= 1);
+            g.unit = cavalry ? UnitType::Cavalry : rear ? UnitType::Archer : sword ? UnitType::Samurai : UnitType::Spearman;
         }
     }
 }
@@ -61,9 +76,34 @@ void BattleSimulation::update(float seconds) {
     constexpr double fixedStep = 1.0 / 60.0;
     accumulator += seconds;
     while (accumulator + 1e-8 >= fixedStep) {
+        std::array<std::array<BattlePoint, 25>, 2> previous{};
+        for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id)
+            previous[team][id] = formations[team].groupPosition(id);
         step(static_cast<float>(fixedStep));
         updateRouts(static_cast<float>(fixedStep));
         updateSmallGroups(static_cast<float>(fixedStep));
+        // 助走は補正前の速度ではなく、衝突検査を通った実移動から数える。
+        for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
+            auto& f = formations[team]; auto& g = f.organization.smallGroups[id];
+            if (f.groupUnit(id) != UnitType::Cavalry) continue;
+            g.chargeCooldown = std::max(0.0f, g.chargeCooldown - static_cast<float>(fixedStep));
+            g.chargeWindow = std::max(0.0f, g.chargeWindow - static_cast<float>(fixedStep));
+            if (result != BattleResult::Ongoing || !f.maneuverEnabled || f.defeated() || g.routed || g.resting ||
+                g.route != SmallGroupRoute::None || g.morale <= 40 || g.attackTarget < 0) {
+                g.chargeDistance = g.chargeWindow = g.approachSpeed = 0; continue;
+            }
+            const auto p = f.groupPosition(id), old = previous[team][id];
+            const auto q = formations[1 - team].groupPosition(g.attackTarget);
+            const float dx = p.x - old.x, dz = p.z - old.z, travel = std::hypot(dx, dz);
+            const float distance = battleDistance(p, q);
+            const float alignment = distance > .001f ? ((q.x-p.x)*std::cos(g.heading)+(q.z-p.z)*std::sin(g.heading))/distance : 0;
+            if (travel / fixedStep >= 2.5f && dx*std::cos(g.heading)+dz*std::sin(g.heading) >= travel*.95f && alignment >= .95f)
+                g.chargeDistance += travel;
+            else g.chargeDistance = 0;
+            if (g.chargeCooldown == 0 && g.chargeDistance >= 4 && distance <= meleeProfile(UnitType::Cavalry).groupRange) {
+                g.chargeWindow = .75f; g.chargeCooldown = 8; g.chargeDistance = 0;
+            }
+        }
         updateFaceDeployments(static_cast<float>(fixedStep));
         time += fixedStep;
         accumulator = std::max(0.0, accumulator - fixedStep);
@@ -71,6 +111,7 @@ void BattleSimulation::update(float seconds) {
 }
 void BattleSimulation::updateSmallGroups(float seconds) {
     using Point = BattlePoint;
+    const float movementLimit = groupMovementLimit(formations);
     std::array<std::array<Point, 25>, 2> positions{};
     for (unsigned team = 0; team < 2; ++team) {
         const auto& f = formations[team];
@@ -143,7 +184,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                             for (unsigned index = 2; index < f.organization.frontReliefs.size(); ++index)
                                 centralBusy |= f.organization.frontReliefs[index].front >= 0;
                             if (centralBusy || b.offsetX != 0 || b.offsetZ != 0) continue;
-                            const float clearance = 4.5f + 3 * std::max(f.speed, enemy.speed) * seconds;
+                            const float clearance = 4.5f + 3 * movementLimit * seconds;
                             const auto clearSegment = [&](Point from, Point to, unsigned ignored = 0) {
                                 if (std::abs(to.x) > 76 || std::abs(to.z) > 76) return false;
                                 for (unsigned otherTeam = 0; otherTeam < 2; ++otherTeam) for (unsigned other = 0; other < 25; ++other) {
@@ -247,7 +288,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 else relief = {};
             }
         }
-        if (contact && f.maneuverEnabled && std::abs(alongX ? enemy.z - f.z : enemy.x - f.x) <= 2) {
+        if (contact && f.maneuverEnabled) {
             for (unsigned lane : {0u, 4u}) {
                 bool occupied = false;
                 for (unsigned id = 0; id < 25; ++id) {
@@ -266,6 +307,10 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                         g.state == SmallGroupState::Engaged) continue;
                     g.route = SmallGroupRoute::Outward; g.routeAlongX = alongX;
                     g.routeForward = sign * (6.8f + depth * 5.2f);
+                    const float side = lane == 0 ? -1.0f : 1.0f;
+                    const float lateralGap = alongX ? enemy.z-f.z : enemy.x-f.x;
+                    // 敵の同じ側の端からも6.1離れる。左右にずれた布陣でも敵列の中へ進まない。
+                    g.routeLateral = side * std::max(6.1f, side*lateralGap + 6.1f);
                     break;
                 }
             }
@@ -281,7 +326,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 };
                 const auto a = base(r.front), b = base(r.reserve);
                 const float dx = r.alongX ? 0 : r.lateral, dz = r.alongX ? r.lateral : 0;
-                const float margin = 4.5f + 3 * std::max(f.speed, enemy.speed) * seconds;
+                const float margin = 4.5f + 3 * movementLimit * seconds;
                 if (point.x > std::min(a.x, b.x) + std::min(0.0f, dx) - margin &&
                     point.x < std::max(a.x, b.x) + std::max(0.0f, dx) + margin &&
                     point.z > std::min(a.z, b.z) + std::min(0.0f, dz) - margin &&
@@ -349,7 +394,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 Point target{p.x - g.approachX, p.z - g.approachZ};
                 const bool approachingEnemy = std::hypot(f.targetX - enemy.x, f.targetZ - enemy.z) <=
                     std::hypot(f.x - enemy.x, f.z - enemy.z) + 0.001f;
-                const bool seeking = result == BattleResult::Ongoing && !f.defeated() && approachingEnemy && !f.moving && g.attackTarget >= 0;
+                const bool cavalry = f.groupUnit(id) == UnitType::Cavalry;
+                const bool seeking = result == BattleResult::Ongoing && !f.defeated() && approachingEnemy && (!f.moving || cavalry) && g.attackTarget >= 0;
                 if (seeking) {
                     const auto q = positions[1 - team][g.attackTarget];
                     const float distance = battleDistance(p, q);
@@ -360,7 +406,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     if (!g.canAttack && g.combatWait == CombatWait::OutOfRange) g.combatWait = CombatWait::Held;
                     continue;
                 }
-                const float clearance = 4.5f + 3 * std::max(f.speed, enemy.speed) * seconds;
+                const float clearance = 4.5f + 3 * movementLimit * seconds;
                 const auto clearPath = [&](Point from, Point to) {
                     if (std::abs(to.x) > 76 || std::abs(to.z) > 76) return false;
                     for (unsigned otherTeam = 0; otherTeam < 2; ++otherTeam) for (unsigned other = 0; other < 25; ++other) {
@@ -400,8 +446,16 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     if (g.detourTarget >= 0) { target = {g.detourX, g.detourZ}; g.combatWait = CombatWait::Detouring; }
                 }
                 const float distance = battleDistance(p, target);
-                if (distance <= 0.0001f) continue;
-                const float travel = std::min(distance, f.speed * seconds);
+                if (distance <= 0.0001f) { g.approachSpeed = 0; continue; }
+                float speed = f.speed;
+                if (cavalry && seeking) {
+                    const auto movement = movementProfile(UnitType::Cavalry);
+                    const float alignment = ((target.x-p.x)*std::cos(g.heading)+(target.z-p.z)*std::sin(g.heading))/distance;
+                    const float desired = alignment >= .95f ? std::max(0.0f, movement.speed - (f.moving ? f.speed : 0)) : 0;
+                    g.approachSpeed += std::clamp(desired-g.approachSpeed, -movement.acceleration*2*seconds, movement.acceleration*seconds);
+                    speed = alignment >= .95f ? g.approachSpeed : 0;
+                }
+                const float travel = std::min(distance, speed * seconds);
                 const Point next{p.x + (target.x - p.x) / distance * travel, p.z + (target.z - p.z) / distance * travel};
                 bool blocked = std::abs(next.x) > 76 || std::abs(next.z) > 76 || reservedForCentralRelief(id, next);
                 for (unsigned otherTeam = 0; otherTeam < 2; ++otherTeam) for (unsigned other = 0; other < 25; ++other) {
@@ -413,7 +467,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     g.approachX += next.x - p.x; g.approachZ += next.z - p.z;
                     if (travel == distance && !seeking) g.approachX = g.approachZ = 0;
                     g.state = SmallGroupState::Advancing;
-                } else if (seeking) g.combatWait = CombatWait::PathBlocked;
+                } else if (seeking) { g.combatWait = CombatWait::PathBlocked; g.approachSpeed = 0; }
                 continue;
             }
             if (!f.maneuverEnabled && !f.defeated()) continue;
@@ -422,7 +476,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             if (g.state == SmallGroupState::Engaged && !returning && !relieving) continue;
             const bool routeX = g.routeAlongX;
             const unsigned lane = routeX ? g.slot / 5 : g.slot % 5;
-            const float side = lane == 0 ? -6.1f : 6.1f;
+            const float side = g.routeLateral != 0 ? g.routeLateral : lane == 0 ? -6.1f : 6.1f;
             const float lateral = routeX ? g.offsetZ : g.offsetX;
             const float forward = routeX ? g.offsetX : g.offsetZ;
             if (relieving) {
@@ -472,7 +526,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
             const Point next{p.x + dx / distance * travel, p.z + dz / distance * travel};
             bool blocked = std::abs(next.x) > 76 || std::abs(next.z) > 76 || reservedForCentralRelief(id, next);
             // 小組の幅と双方の一刻みの移動量を確保する。障害物経路探索は後続工程。
-            const float clearance = 4.5f + 3 * std::max(f.speed, enemy.speed) * seconds;
+            const float clearance = 4.5f + 3 * movementLimit * seconds;
             for (unsigned otherTeam = 0; otherTeam < 2; ++otherTeam)
                 for (unsigned other = 0; other < 25; ++other) {
                     if (otherTeam == team && other == id) continue;
@@ -489,6 +543,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
 }
 void BattleSimulation::step(float seconds) {
     const auto beforeMove = formations;
+    const float movementLimit = groupMovementLimit(formations);
     for (unsigned team = 0; team < formations.size(); ++team) {
         auto& formation = formations[team];
         const auto& original = beforeMove[team];
@@ -646,7 +701,7 @@ void BattleSimulation::step(float seconds) {
             const bool inRange = distance <= combatProfile(formations[team].groupUnit(id)).groupRange;
             const BattlePoint end = inRange ? q : BattlePoint{q.x - (q.x - p.x) * combatProfile(formations[team].groupUnit(id)).stopDistance / distance,
                 q.z - (q.z - p.z) * combatProfile(formations[team].groupUnit(id)).stopDistance / distance};
-            const float clearance = inRange ? 2.25f : 4.5f + 3 * std::max(formations[team].speed, formations[1 - team].speed) * seconds;
+            const float clearance = inRange ? 2.25f : 4.5f + 3 * movementLimit * seconds;
             bool blocked = false;
             for (unsigned blockerTeam = 0; blockerTeam < 2 && !blocked; ++blockerTeam)
                 for (unsigned blocker = 0; blocker < 25; ++blocker) {
@@ -662,7 +717,8 @@ void BattleSimulation::step(float seconds) {
             }
         }
         const auto p = points[team][id];
-        const float targetHeading = g.attackTarget >= 0 ? std::atan2(points[1 - team][g.attackTarget].z - p.z,
+        const float targetHeading = g.detourTarget >= 0 && g.route == SmallGroupRoute::None ? std::atan2(g.detourZ-p.z,g.detourX-p.x) :
+            g.attackTarget >= 0 ? std::atan2(points[1 - team][g.attackTarget].z - p.z,
             points[1 - team][g.attackTarget].x - p.x) : formations[team].heading;
         g.heading = turnToward(g.heading, targetHeading, combatProfile(formations[team].groupUnit(id)).turnRate * seconds);
     }
@@ -694,6 +750,7 @@ void BattleSimulation::step(float seconds) {
         }
         if (blocked) { g.combatWait = CombatWait::Obstructed; continue; }
         const auto participation = participatingContactFronts(measureContactFronts(contactBodies, team, id), g.faceDeployment, g.strength);
+        bool charged = false;
         for (unsigned target = 0; target < 25; ++target) {
             float fighters = 0;
             for (const auto& face : participation.faces) fighters += face.enemyFighters[target];
@@ -717,8 +774,17 @@ void BattleSimulation::step(float seconds) {
             const float directionBonus = defense < -0.5f ? 1.5f : defense < 0.5f ? 1.25f : 1.0f;
             damage[1 - team][target] += combatProfile(f.groupUnit(id)).damagePerSecond * (fighters / 5) * (0.5f + f.cohesion / 200) *
                 (0.5f + g.morale / 200) * directionBonus * seconds;
+            if (f.groupUnit(id) == UnitType::Cavalry && g.chargeWindow > 0 && f.maneuverEnabled &&
+                !g.resting && !g.routed && g.route == SmallGroupRoute::None && g.morale > 40) {
+                const bool braced = formations[1-team].groupUnit(target) == UnitType::Spearman && defense >= .5f && victim.morale > 40;
+                damage[1-team][target] += fighters * .4f * (braced ? .15f : 1.0f);
+                charged = true;
+            }
         }
         g.canAttack = g.activeFighters > 0;
+        if (charged) {
+            ++g.charges; g.lastCharge = time; g.chargeWindow = 0;
+        }
         g.combatWait = CombatWait::None;
     }
     std::array<bool, 2> moved{};

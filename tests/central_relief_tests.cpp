@@ -2,6 +2,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <memory>
+#include <string_view>
+#include <iomanip>
 
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 unsigned slot(bool alongX, unsigned rank, unsigned lane) { return alongX ? lane * 5 + rank : rank * 5 + lane; }
@@ -27,8 +29,59 @@ BattleSimulation fixture(bool alongX, float sign, unsigned team, unsigned lane, 
     battle.running = true;
     return battle;
 }
-int main() {
+// 幾何テストと分け、攻撃・接近を有効にした最初の交代をCSVへ記録する。
+// 成功率を合格条件にせず、調整前後の条件付きの観測値として扱う。
+void combatReport() {
+    std::cout << "along_x,sign,team,lane,gap,enemy_hold,status,start_s,ready_s,exchange_s,end_s,front_loss,formation_loss,front_routed,reserve_routed,last_phase,battle_ended\n";
+    std::cout << std::fixed << std::setprecision(3);
+    for (bool alongX : {false, true}) for (float sign : {-1.0f, 1.0f}) for (unsigned team : {0u, 1u})
+        for (unsigned lane : {1u, 2u, 3u}) for (bool gap : {true, false}) for (bool enemyHold : {true, false}) {
+            auto battle = std::make_unique<BattleSimulation>(fixture(alongX, sign, team, lane, gap));
+            battle->formations[1 - team].maneuverEnabled = !enemyHold;
+            auto& f = battle->formations[team];
+            const unsigned front = slot(alongX, sign > 0 ? 4 : 0, lane);
+            const unsigned rear = slot(alongX, sign > 0 ? 3 : 1, lane);
+            const float initialFront = f.organization.smallGroups[front].strength, initialTotal = f.strength;
+            double start = -1, ready = -1, exchange = -1;
+            unsigned supporters = 0;
+            unsigned lastPhase = 0;
+            const char* status = "not_started";
+            for (unsigned tick = 0; tick < 2400; ++tick) {
+                lastPhase = f.organization.frontReliefs[lane + 1].phase;
+                battle->update(1.0f / 60);
+                const auto& r = f.organization.frontReliefs[lane + 1];
+                if (start < 0 && r.front == static_cast<int>(front)) {
+                    start = battle->time; supporters = r.corridorGroups; status = "pending";
+                }
+                if (start >= 0 && ready < 0 && r.front == static_cast<int>(front) && r.phase != 4) ready = battle->time;
+                if (exchange < 0 && f.organization.smallGroups[front].slot == rear &&
+                    f.organization.smallGroups[rear].slot == front) exchange = battle->time;
+                if (start >= 0 && r.front != static_cast<int>(front)) {
+                    status = exchange >= 0 ? "exchanged_released" : "aborted";
+                    break;
+                }
+                if (battle->result != BattleResult::Ongoing) break;
+            }
+            // 予約解除は敗走でも起こるため、列が実際に戻ったかを別に判定する。
+            if (exchange >= 0 && std::string_view(status) == "exchanged_released") {
+                bool restored = true;
+                for (unsigned id = 0; id < 25; ++id) if (supporters & (1u << id)) {
+                    const auto& g = f.organization.smallGroups[id];
+                    if (g.routed || g.offsetX != 0 || g.offsetZ != 0 || g.route != SmallGroupRoute::None) restored = false;
+                }
+                status = restored ? "restored" : "exchanged_interrupted";
+            }
+            std::cout << alongX << ',' << sign << ',' << team << ',' << lane << ',' << gap << ',' << enemyHold << ','
+                << status << ',' << start << ',' << ready << ',' << exchange << ',' << battle->time << ','
+                << initialFront - f.organization.smallGroups[front].strength << ',' << initialTotal - f.strength << ','
+                << f.organization.smallGroups[front].routed << ',' << f.organization.smallGroups[rear].routed << ','
+                << lastPhase << ',' << (battle->result != BattleResult::Ongoing) << '\n';
+        }
+}
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--combat-report") { combatReport(); return 0; }
+        if (argc != 1) throw std::runtime_error("Usage: central_relief_tests [--combat-report]");
         for (bool alongX : {false, true}) for (float sign : {-1.0f, 1.0f}) for (unsigned team : {0u, 1u})
             for (unsigned lane : {1u, 2u, 3u}) for (bool gap : {true, false}) {
                 auto battle = fixture(alongX, sign, team, lane, gap);

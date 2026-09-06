@@ -117,9 +117,14 @@ struct WindowState {
             group.state == SmallGroupState::Routed ? L"敗走済" : group.route == SmallGroupRoute::Returning ? L"復帰中" :
             group.route == SmallGroupRoute::ReliefCorridor ? L"交代通路を確保・復帰中" : group.resting ? L"後方で再集結中" : group.route == SmallGroupRoute::ReliefReserve ? L"前列交代中" :
             group.route == SmallGroupRoute::ReliefWithdraw ? L"交代後退中" :
+            group.route == SmallGroupRoute::Outward && group.state != SmallGroupState::Engaged ? L"側方へ展開中" :
+            group.route == SmallGroupRoute::Forward && group.state != SmallGroupState::Engaged ? L"側面へ前進中" :
             group.canAttack && simulation.result == BattleResult::Ongoing ? L"攻撃" : group.state == SmallGroupState::Engaged ? L"接敵" : group.state == SmallGroupState::Retreating ? L"撤退" :
             group.state == SmallGroupState::Advancing ? L"前進" : L"待機";
         text += L" " + std::wstring(action);
+        if (simulation.formations[selected].groupUnit(selectedGroup) == UnitType::Cavalry)
+            text += L" [騎馬・突撃" + std::to_wstring(group.charges) + L"回" +
+                (simulation.time - group.lastCharge < 1 ? L"・突撃命中]" : group.chargeDistance > 0 ? L"・助走中]" : L"]");
         const auto fronts = simulation.contactFronts(static_cast<unsigned>(selected), static_cast<unsigned>(selectedGroup));
         float totalWidth = 0;
         for (const auto& face : fronts.faces) totalWidth += face.width();
@@ -439,14 +444,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             rebuildScene();
             state.simulation.running = options.march;
             updateSceneSprites(activeScene, state.simulation, state.camera, -1, -1, static_cast<float>(state.width) / state.height, state.height);
-            unsigned spears = 0, swords = 0, archers = 0;
+            unsigned spears = 0, swords = 0, archers = 0, cavalry = 0;
             for (const auto& binding : activeScene.soldierBindings) {
                 const auto tile = activeScene.sprites[binding.spriteIndex].tile;
-                if (tile >= Scene::unitTileCount * 2) ++archers;
+                if (tile >= Scene::unitTileCount * 3) ++cavalry; else if (tile >= Scene::unitTileCount * 2) ++archers;
                 else if (tile >= Scene::unitTileCount) ++swords; else ++spears;
             }
             if (!state.simulation.mixed || !activeScene.mixed || state.inspect || state.drillEnabled ||
-                (activeScene.generatedSoldiers && (!spears || !swords || !archers)))
+                (activeScene.generatedSoldiers && (!spears || !swords || !archers || !cavalry)))
                 throw std::runtime_error("Mixed battle input, reset or sprite banks failed");
         }
         if(options.smoke && options.swordBattle){
@@ -530,6 +535,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         bool observedCombat = false, observedRetreat = false;
         bool observedAttack = false;
         bool observedArrows = false;
+        bool observedCavalryAttack = false;
+        unsigned observedCharges = 0;
         bool observedFrontRelief = false;
         bool observedLocalRout = false;
         unsigned routCaptureFrame = smokeFrames;
@@ -644,6 +651,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (options.combatTest && options.mixedBattle)
                 for (unsigned i = 0; i < Scene::arrowCount; ++i)
                     observedArrows |= activeScene.sprites[activeScene.arrowStart + i].tile == 12;
+            if (options.combatTest && options.mixedBattle) {
+                for (const auto& f : state.simulation.formations) for (const auto& g : f.organization.smallGroups)
+                    observedCharges = std::max(observedCharges, g.charges);
+                for (unsigned id = 0; id < activeScene.individuals->soldiers.size(); ++id) {
+                    const auto& soldier = activeScene.individuals->soldiers[id];
+                    observedCavalryAttack |= soldier.attacking &&
+                        state.simulation.formations[id / SoldierVisuals::perTeam].groupUnit(soldier.smallGroup) == UnitType::Cavalry;
+                }
+            }
             renderer.updateSprites(activeScene.sprites);
             renderer.resize(state.width, state.height);
             const bool captureNow = !options.capture.empty() && (options.smoke ? frame == smokeFrames - 1 : frame == 0);
@@ -658,7 +674,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 const int fps = titleSeconds > 0 ? static_cast<int>(titleFrames / titleSeconds) : 0;
                 const auto title = std::wstring(L"戦国合戦 | ") + (state.inspect ? L"素材確認" : state.selectionStatus()) + L" | " +
                     (state.inspect ? L"" : battleStatus(state.simulation)) + L" | " +
-                    (state.simulation.mixed && !state.inspect ? L"槍・刀・弓混成" : generatedSoldiers ? unitVisual(activeScene.unit).name : L"仮素材") +
+                    (state.simulation.mixed && !state.inspect ? L"槍・刀・弓・騎馬混成" : generatedSoldiers ? unitVisual(activeScene.unit).name : L"仮素材") +
                     (state.inspect ? L" 素材確認 | " : L" 戦場 | ") + L"表示上限 " + std::to_wstring(displayedSoldiers) + L" | " +
                     std::to_wstring(fps) + L" fps | " + (state.inspect ? L"素材確認" :
                         (state.selected == 0 ? L"赤部隊を選択" : state.selected == 1 ? L"青部隊を選択" : L"選択なし")) +
@@ -667,7 +683,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                         state.audioSettings.selected == AudioBus::Environment ? L"環境 " : L"効果音 ") +
                     std::to_wstring(state.audioSettings.percent[static_cast<unsigned>(state.audioSettings.selected)]) + L"%]" +
                     (state.audioSaveFailed ? L" 音量保存失敗" : L"") +
-                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 F7:刀戦闘 F8:槍・刀・弓混成 M:消音 F5:音量対象 +/-:調整";
+                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 F7:刀戦闘 F8:槍・刀・弓・騎馬混成 M:消音 F5:音量対象 +/-:調整";
                 const auto drillTitle=std::wstring(L"隊列確認 | ")+unitVisual(state.unit).name+
                     (state.drill.running?L" 進行中":L" 一時停止")+L" | 4列×6段・24体 | 隊列ずれ "+std::to_wstring(state.drill.error())+
                     L" | 右クリック:移動 Space:再生/停止 H:その場で整列 Home:初期化 F4:兵種 F6:素材へ F7:刀戦闘 | 黄点:持ち場 水色:目的地";
@@ -676,6 +692,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (options.smoke && frame >= smokeFrames) break;
         }
         if (options.smoke) {
+            if (options.combatTest && options.mixedBattle && (!observedCavalryAttack || observedCharges == 0))
+                throw std::runtime_error("Mixed cavalry charge or attack display was missing");
             if (options.combatTest && options.mixedBattle && (!observedArrows || state.simulation.volleysFired == 0 || state.simulation.volleysHit == 0))
                 throw std::runtime_error("Mixed battle arrows: fired=" + std::to_string(state.simulation.volleysFired) +
                     " hit=" + std::to_string(state.simulation.volleysHit) + " rendered=" + std::to_string(observedArrows));
@@ -698,6 +716,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                    << "Arrow volleys fired: " << state.simulation.volleysFired << '\n'
                    << "Arrow volleys hit: " << state.simulation.volleysHit << '\n'
                    << "Arrows rendered: " << observedArrows << '\n'
+                   << "Cavalry attack rendered: " << observedCavalryAttack << '\n'
+                   << "Maximum group charges observed: " << observedCharges << '\n'
                    << "D3D12 debug layer: " << (renderer.debugEnabled() ? "enabled, no warnings/errors" : "unavailable") << '\n';
             if (!report) throw std::runtime_error("Cannot write smoke report");
         }

@@ -90,8 +90,8 @@ int main() {
         BattleSimulation mixed; mixed.reset(UnitType::Spearman, true); mixed.running = true;
         require(mixed.formations[0].x == -6 && mixed.formations[1].x == 6,
             "Mixed armies lost their staggered starting positions");
-        require(mixed.formations[0].groupUnit(20) == UnitType::Samurai &&
-            mixed.formations[1].groupUnit(0) == UnitType::Spearman && mixed.formations[1].groupUnit(17) == UnitType::Samurai,
+        require(mixed.formations[0].groupUnit(20) == UnitType::Cavalry &&
+            mixed.formations[1].groupUnit(0) == UnitType::Cavalry && mixed.formations[1].groupUnit(17) == UnitType::Samurai,
             "Mixed armies lost their distinct front and reserve deployments");
         mixed.update(20);
         std::cout << "Mixed volleys: " << mixed.volleysFired << " fired, " << mixed.volleysHit << " hit\n";

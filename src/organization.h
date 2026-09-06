@@ -27,6 +27,10 @@ struct SmallGroup {
     std::array<float, 25> activeOpponents{};
     std::optional<UnitType> unit;
     float shotCooldown = 0;
+    float approachSpeed = 0;
+    float chargeDistance = 0, chargeWindow = 0, chargeCooldown = 0;
+    unsigned charges = 0;
+    double lastCharge = -10;
     double lastShot = -10;
     float rangedLoss = 0;
     BattlePoint lastRangedImpact{};
@@ -39,6 +43,7 @@ struct SmallGroup {
     SmallGroupRoute route = SmallGroupRoute::None;
     bool routeAlongX = false;
     float routeForward = 0;
+    float routeLateral = 0;
     bool routed = false;
     float routShock = 0;
     // 敗走は命令移動から独立した世界座標で進める。

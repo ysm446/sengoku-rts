@@ -142,7 +142,8 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
         // 表示密度と実兵力は異なるため、経路や損害を決めるSimulationへは書き戻さない。
         const float follow = static_cast<float>(1 - std::exp(-(4 + variation * 5) * dt));
         const auto movement = movementProfile(formation.groupUnit(soldier.smallGroup));
-        const float maxSpeed = formation.speed * (group.routed || formation.defeated() ? 2.0f : 1.5f);
+        const float maxSpeed = (formation.groupUnit(soldier.smallGroup) == UnitType::Cavalry ? movement.speed : formation.speed) *
+            (group.routed || formation.defeated() ? 2.0f : 1.5f);
         const float forwardX = std::cos(soldier.heading), forwardZ = std::sin(soldier.heading);
         const float alignment = distance > 0.003f ? std::clamp((dx * forwardX + dz * forwardZ) / distance, 0.0f, 1.0f) : 0;
         const float wanted = std::min(maxSpeed, distance * follow / static_cast<float>(dt)) * alignment;
