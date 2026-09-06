@@ -36,6 +36,14 @@ add_custom_command(TARGET sengoku_assets POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/sprites/ashigaru_attack.png"
         "$<TARGET_FILE_DIR:sengoku_rts>/assets/sprites/ashigaru_attack.png")
 add_dependencies(sengoku_rts sengoku_assets)
+add_custom_command(TARGET sengoku_assets POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:sengoku_rts>/assets/ui/emotions")
+foreach(emotion motivation anxiety fear)
+    add_custom_command(TARGET sengoku_assets POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/ui/emotions/${emotion}.png"
+            "$<TARGET_FILE_DIR:sengoku_rts>/assets/ui/emotions/${emotion}.png")
+endforeach()
 foreach(unit samurai archer cavalry)
     foreach(animation idle walk attack)
         add_custom_command(TARGET sengoku_assets POST_BUILD
@@ -55,9 +63,12 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(central_relief_tests tests/central_relief_tests.cpp)
+    target_link_libraries(central_relief_tests PRIVATE sengoku_scene)
+    add_test(NAME central_relief COMMAND central_relief_tests)
     add_executable(emotion_tests tests/emotion_tests.cpp)
     target_link_libraries(emotion_tests PRIVATE sengoku_scene)
-    add_test(NAME emotions COMMAND emotion_tests)
+    add_test(NAME emotions COMMAND emotion_tests "${CMAKE_CURRENT_SOURCE_DIR}/assets/ui/emotions")
     add_executable(recovery_tests tests/recovery_tests.cpp)
     target_link_libraries(recovery_tests PRIVATE sengoku_scene)
     add_test(NAME recovery COMMAND recovery_tests)

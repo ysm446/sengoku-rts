@@ -106,6 +106,7 @@ struct SceneOptions {
     std::filesystem::path soldierSheet;
     std::filesystem::path walkSheet;
     std::filesystem::path attackSheet;
+    std::filesystem::path emotionDirectory;
     unsigned directionOffset = 0;
     bool inspect = false;
     bool inspectAttack = false;

@@ -38,11 +38,12 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
                 std::abs(g.strength - h.strength) < 0.001f &&
                 std::abs(g.morale - h.morale) < 0.001f, "Small group depends on update interval");
         }
-        for (unsigned side = 0; side < 2; ++side) {
+        for (unsigned side = 0; side < x.organization.frontReliefs.size(); ++side) {
             const auto& g = x.organization.frontReliefs[side];
             const auto& h = y.organization.frontReliefs[side];
             require(g.front == h.front && g.reserve == h.reserve && g.phase == h.phase &&
-                g.alongX == h.alongX && g.forward == h.forward, "Front relief depends on update interval");
+                g.alongX == h.alongX && g.forward == h.forward && g.lateral == h.lateral &&
+                g.corridorGroups == h.corridorGroups && g.corridorShift == h.corridorShift, "Front relief depends on update interval");
         }
     }
 }

@@ -13,7 +13,7 @@ std::uint32_t hash(unsigned value) {
 std::uint32_t rgba(unsigned r, unsigned g, unsigned b) { return r | (g << 8) | (b << 16) | 0xff000000u; }
 
 // 外部素材なしで描画経路を検証するための仮Pixel Sprite。
-void makeAtlas(Scene& scene) {
+void makeAtlas(Scene& scene, const std::filesystem::path& emotionDirectory) {
     scene.atlas.resize(Scene::atlasWidth * Scene::atlasHeight);
     auto rect = [&](unsigned tile, int x0, int y0, int x1, int y1, std::uint32_t color) {
         for (int y = y0; y <= y1; ++y)
@@ -77,6 +77,28 @@ void makeAtlas(Scene& scene) {
         };
         box(3, 2, 28, 25, ink); box(6, 24, 11, 29, ink);
         box(4, 3, 27, 24, cloth); box(7, 24, 10, 27, cloth);
+        if (!emotionDirectory.empty()) {
+            const wchar_t* names[] = {L"motivation.png", L"anxiety.png", L"fear.png"};
+            const auto pixels = loadSpriteSheet(emotionDirectory / names[icon], 32, 32);
+            bool transparent = false, opaque = false;
+            for (const auto pixel : pixels) {
+                transparent |= (pixel >> 24) == 0;
+                opaque |= (pixel >> 24) == 255;
+                if ((pixel >> 24) != 0 && (pixel >> 24) != 255)
+                    throw std::runtime_error("Emotion icons require binary alpha");
+            }
+            if (!transparent || !opaque) throw std::runtime_error("Emotion icons require transparent background and visible pixels");
+            // 枠は共通のコード素材、中身は独立した32px PNG。透明余白も含めて2倍で配置。
+            for (unsigned y = 0; y < 32; ++y) for (unsigned x = 0; x < 32; ++x) {
+                const auto pixel = pixels[y * 32 + x];
+                if (pixel >> 24) {
+                    if (x < 5 || x > 26 || y < 4 || y > 23)
+                        throw std::runtime_error("Emotion icon overlaps bubble border");
+                    box(x, y, x, y, pixel);
+                }
+            }
+            continue;
+        }
         if (icon == 0) {
             box(10, 12, 22, 21, rgba(219, 84, 27)); box(12, 8, 19, 20, rgba(219, 84, 27));
             box(15, 5, 17, 18, rgba(219, 84, 27)); box(14, 14, 18, 21, rgba(255, 210, 62));
@@ -102,7 +124,7 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     scene.inspectAttack = options.inspectAttack;
     scene.headingOffset = static_cast<float>(options.directionOffset % 8) * DirectX::XM_PIDIV4;
     scene.soldierCount = options.inspect ? 16 : soldiers;
-    makeAtlas(scene);
+    makeAtlas(scene, options.emotionDirectory);
     if (!options.soldierSheet.empty()) {
         const auto pixels = loadSpriteSheet(options.soldierSheet, Scene::tileWidth * 8, Scene::tileHeight);
         for (unsigned y = 0; y < Scene::tileHeight; ++y)

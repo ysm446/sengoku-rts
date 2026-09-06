@@ -115,7 +115,7 @@ struct WindowState {
             L"組 小組" + std::to_wstring(selectedGroup + 1);
         const wchar_t* action = group.state == SmallGroupState::Fleeing ? (group.fleeBlocked ? L"敗走中・退路閉塞" : L"敗走中") :
             group.state == SmallGroupState::Routed ? L"敗走済" : group.route == SmallGroupRoute::Returning ? L"復帰中" :
-            group.resting ? L"後方で再集結中" : group.route == SmallGroupRoute::ReliefReserve ? L"前列交代中" :
+            group.route == SmallGroupRoute::ReliefCorridor ? L"交代通路を確保・復帰中" : group.resting ? L"後方で再集結中" : group.route == SmallGroupRoute::ReliefReserve ? L"前列交代中" :
             group.route == SmallGroupRoute::ReliefWithdraw ? L"交代後退中" :
             group.canAttack && simulation.result == BattleResult::Ongoing ? L"攻撃" : group.state == SmallGroupState::Engaged ? L"接敵" : group.state == SmallGroupState::Retreating ? L"撤退" :
             group.state == SmallGroupState::Advancing ? L"前進" : L"待機";
@@ -125,7 +125,7 @@ struct WindowState {
         for (const auto& face : fronts.faces) totalWidth += face.width();
         if (totalWidth > 0 || group.faceDeployment.total() > 0.01f) {
             const bool returning = group.route == SmallGroupRoute::Returning || group.route == SmallGroupRoute::ReliefReserve ||
-                group.route == SmallGroupRoute::ReliefWithdraw;
+                group.route == SmallGroupRoute::ReliefWithdraw || group.route == SmallGroupRoute::ReliefCorridor;
             const auto allocation = allocateContactFronts(returning ? ContactFronts{} : fronts, group.strength);
             const auto decimal = [](float value) {
                 const int tenths = static_cast<int>(std::round(value * 10));
@@ -405,6 +405,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         bool generatedSoldiers = false;
         const auto rebuildScene = [&] {
             SceneOptions sceneOptions;
+            sceneOptions.emotionDirectory = executableDirectory() / L"assets/ui/emotions";
             sceneOptions.formationPreview=state.drillEnabled;
             sceneOptions.mixed = !state.inspect && state.simulation.mixed;
             sceneOptions.unit = state.inspect ? state.unit : state.simulation.formations[0].unit;

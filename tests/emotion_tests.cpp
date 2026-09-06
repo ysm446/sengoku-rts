@@ -1,10 +1,39 @@
 #include "scene.h"
 #include "battle_clock.h"
+#include "sprite_sheet.h"
 #include <stdexcept>
 #include <iostream>
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
-int main() {
+int main(int argc, char** argv) {
     try {
+        require(argc == 2, "Emotion asset directory is required");
+        SceneOptions assetOptions;
+        assetOptions.emotionDirectory = argv[1];
+        const auto assetScene = makeScene(1000, assetOptions);
+        const auto fallbackScene = makeScene();
+        const char* names[] = {"motivation.png", "anxiety.png", "fear.png"};
+        for (unsigned icon = 0; icon < 3; ++icon) {
+            const auto pixels = loadSpriteSheet(assetOptions.emotionDirectory / names[icon], 32, 32);
+            unsigned visiblePixels = 0;
+            bool differs = false;
+            for (unsigned y = 0; y < 32; ++y) for (unsigned x = 0; x < 32; ++x) {
+                const auto pixel = pixels[y * 32 + x];
+                visiblePixels += (pixel >> 24) != 0;
+                for (unsigned dy = 0; dy < 2; ++dy) for (unsigned dx = 0; dx < 2; ++dx) {
+                    const auto index = (128 + y * 2 + dy) * Scene::atlasWidth + icon * 64 + x * 2 + dx;
+                    if (pixel >> 24) require(assetScene.atlas[index] == pixel, "Icon pixels were not copied intact");
+                    differs |= assetScene.atlas[index] != fallbackScene.atlas[index];
+                }
+            }
+            require(visiblePixels > 100 && visiblePixels < 440 && differs, "Icon is empty, opaque, or still placeholder");
+            const auto border = 132 * Scene::atlasWidth + icon * 64 + 6;
+            require(assetScene.atlas[border] == fallbackScene.atlas[border], "Asset overwrote bubble frame");
+        }
+        auto invalidOptions = assetOptions;
+        invalidOptions.emotionDirectory /= "missing";
+        bool rejected = false;
+        try { makeScene(1000, invalidOptions); } catch (const std::runtime_error&) { rejected = true; }
+        require(rejected, "Missing emotion assets were silently ignored");
         BattleSimulation battle;
         auto scene = makeScene();
         Camera camera;

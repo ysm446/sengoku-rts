@@ -212,7 +212,7 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
                 if (formation.groupUnit(group) == UnitType::Archer) continue;
                 const auto& unit = formation.organization.smallGroups[group];
                 if (unit.routed || unit.resting || unit.route == SmallGroupRoute::Returning || unit.route == SmallGroupRoute::ReliefReserve ||
-                    unit.route == SmallGroupRoute::ReliefWithdraw || (unit.attackTarget >= 0 && !unit.canAttack)) continue;
+                    unit.route == SmallGroupRoute::ReliefWithdraw || unit.route == SmallGroupRoute::ReliefCorridor || (unit.attackTarget >= 0 && !unit.canAttack)) continue;
                 const auto p = formation.groupPosition(group);
                 int targetGroup = unit.attackTarget;
                 // 静止した表示確認用の状態でも、小組間の実距離から相手を選べるようにする。

@@ -6,7 +6,7 @@
 
 // ユーザー指定の4階層。人数は編成兵力であり描画Sprite数ではない。
 enum class SmallGroupState { Waiting, Advancing, Engaged, Retreating, Fleeing, Routed };
-enum class SmallGroupRoute { None, Outward, Forward, Returning, ReliefReserve, ReliefWithdraw };
+enum class SmallGroupRoute { None, Outward, Forward, Returning, ReliefReserve, ReliefWithdraw, ReliefCorridor };
 enum class CombatWait { None, NoTarget, OutOfRange, Turning, Obstructed, PathBlocked, Held, Returning, Detouring };
 struct SmallGroup {
     unsigned nominalStrength = 20;
@@ -48,18 +48,23 @@ struct SmallGroup {
     float displacementX(unsigned id) const { return (static_cast<float>(slot % 5) - static_cast<float>(id % 5)) * 5.2f + offsetX + approachX; }
     float displacementZ(unsigned id) const { return (static_cast<float>(slot / 5) - static_cast<float>(id / 5)) * 5.2f + offsetZ + approachZ; }
 };
-// 正面両端の交代。配置だけを交換し、所属・兵力・表示IDは移さない。
+// 正面の交代。配置だけを交換し、所属・兵力・表示IDは移さない。
 struct FrontRelief {
     int front = -1, reserve = -1;
     unsigned phase = 0;
     bool alongX = false;
     float forward = 0;
+    float lateral = 0;
+    // 4: 通路を開く、5: 交代後に列を戻す。0〜3は既存の交代段階。
+    unsigned corridorGroups = 0;
+    float corridorShift = 0;
 };
 struct Company { unsigned firstGroup = 0, groupCount = 5, troop = 0; };
 struct Troop { unsigned firstCompany = 0, companyCount = 0; };
 struct Organization {
     std::array<SmallGroup, 25> smallGroups{};
-    std::array<FrontRelief, 2> frontReliefs{};
+    // 最初の2枠は従来の両端。後続3枠は中央の列。
+    std::array<FrontRelief, 5> frontReliefs{};
     std::array<Company, 5> companies{};
     std::array<Troop, 2> troops{{{0, 3}, {3, 2}}};
     Organization() {

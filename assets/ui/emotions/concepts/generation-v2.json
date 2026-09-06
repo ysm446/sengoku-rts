@@ -1,0 +1,21 @@
+{
+  "tool": "built-in image_gen",
+  "status": "RGB出力のため背景除去が必要",
+  "images": [
+    {
+      "name": "motivation",
+      "prompt": "Use case: background-extraction. Asset type: production pixel-art emotion icon for a game. Input image is the edit target. Preserve the motivation icon's recognizable silhouette, expression and colors. Remove ALL checkerboard background and replace it with actual transparent alpha, not drawn squares or white. Flatten gradients into a small flat pixel-art palette and clean the edges. Center on a square canvas with 12.5 percent transparent padding on each side. Strict 32x32 logical pixel grid, nearest-neighbor enlarged, dark brown outline, no antialiasing, no shadow, no speech bubble, no text. Return an RGBA PNG with genuinely transparent background.",
+      "output": "motivation-v2.png"
+    },
+    {
+      "name": "anxiety",
+      "prompt": "Use case: background-extraction. Asset type: production pixel-art emotion icon for a game. Input image is the edit target. Preserve the anxiety icon's recognizable silhouette, expression and colors. Remove ALL checkerboard background and replace it with actual transparent alpha, not drawn squares or white. Flatten gradients into a small flat pixel-art palette and clean the edges. Center on a square canvas with 12.5 percent transparent padding on each side. Strict 32x32 logical pixel grid, nearest-neighbor enlarged, dark brown outline, no antialiasing, no shadow, no speech bubble, no text. Return an RGBA PNG with genuinely transparent background.",
+      "output": "anxiety-v2.png"
+    },
+    {
+      "name": "fear",
+      "prompt": "Use case: background-extraction. Asset type: production pixel-art emotion icon for a game. Input image is the edit target. Preserve the fear icon's recognizable silhouette, expression and colors. Remove ALL checkerboard background and replace it with actual transparent alpha, not drawn squares or white. Flatten gradients into a small flat pixel-art palette and clean the edges. Center on a square canvas with 12.5 percent transparent padding on each side. Strict 32x32 logical pixel grid, nearest-neighbor enlarged, dark brown outline, no antialiasing, no shadow, no speech bubble, no text. Return an RGBA PNG with genuinely transparent background.",
+      "output": "fear-v2.png"
+    }
+  ]
+}
