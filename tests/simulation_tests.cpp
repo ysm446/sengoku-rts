@@ -20,6 +20,10 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
         for (unsigned id = 0; id < 25; ++id) {
             const auto& g = x.organization.smallGroups[id];
             const auto& h = y.organization.smallGroups[id];
+            require(g.awareness.enemies == h.awareness.enemies && g.awareness.allies == h.awareness.allies &&
+                g.awareness.cautious == h.awareness.cautious && g.awareness.decision == h.awareness.decision &&
+                g.awareness.enemyStrength == h.awareness.enemyStrength && g.awareness.alliedStrength == h.awareness.alliedStrength,
+                "Tactical awareness depends on update interval");
             require(std::abs(g.faceDeployment.accountedStrength - h.faceDeployment.accountedStrength) < 0.001f,
                 "Deployment strength depends on update interval");
             for (unsigned face = 0; face < 4; ++face)

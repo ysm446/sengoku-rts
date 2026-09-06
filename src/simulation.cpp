@@ -40,6 +40,7 @@ void BattleSimulation::hold(unsigned index) {
     for (auto& g : formation.organization.smallGroups) {
         g.approachSpeed = g.chargeDistance = g.chargeWindow = 0;
     }
+    updateDecisions();
 }
 void BattleSimulation::reset(UnitType unit, bool mixedBattle) {
     const auto profile = meleeProfile(unit);
@@ -106,6 +107,7 @@ void BattleSimulation::update(float seconds) {
             }
         }
         updateFaceDeployments(static_cast<float>(fixedStep));
+        updateDecisions();
         time += fixedStep;
         accumulator = std::max(0.0, accumulator - fixedStep);
     }
@@ -304,7 +306,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     const unsigned slot = alongX ? lane * 5 + rank : rank * 5 + lane;
                     auto& g = *std::find_if(f.organization.smallGroups.begin(), f.organization.smallGroups.end(),
                         [slot](const SmallGroup& group) { return group.slot == slot; });
-                    if (g.routed || g.resting || f.groupUnit(static_cast<unsigned>(&g - f.organization.smallGroups.data())) == UnitType::Archer || g.approachX != 0 || g.approachZ != 0 || g.route != SmallGroupRoute::None || g.fatigue > 2 || g.strength <= g.nominalStrength * 0.5f || g.morale <= 30 || g.offsetX != 0 || g.offsetZ != 0 ||
+                    if (g.routed || g.resting || g.awareness.cautious || f.groupUnit(static_cast<unsigned>(&g - f.organization.smallGroups.data())) == UnitType::Archer || g.approachX != 0 || g.approachZ != 0 || g.route != SmallGroupRoute::None || g.fatigue > 2 || g.strength <= g.nominalStrength * 0.5f || g.morale <= 30 || g.offsetX != 0 || g.offsetZ != 0 ||
                         g.state == SmallGroupState::Engaged) continue;
                     g.route = SmallGroupRoute::Outward; g.routeAlongX = alongX;
                     g.routeForward = sign * (6.8f + depth * 5.2f);
@@ -392,11 +394,18 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 }
             }
             if (g.route == SmallGroupRoute::None) {
+                // 停止命令と既存の交代経路を優先し、不利な予備の独断接近だけを控える。
+                if (g.awareness.cautious && !f.moving && !g.canAttack && !f.defeated() && g.attackTarget >= 0 &&
+                    battleDistance(p,positions[1-team][g.attackTarget]) > combatProfile(f.groupUnit(id)).groupRange) {
+                    g.approachSpeed = 0; g.detourTarget = -1; continue;
+                }
                 Point target{p.x - g.approachX, p.z - g.approachZ};
                 const bool approachingEnemy = std::hypot(f.targetX - enemy.x, f.targetZ - enemy.z) <=
                     std::hypot(f.x - enemy.x, f.z - enemy.z) + 0.001f;
                 const bool cavalry = f.groupUnit(id) == UnitType::Cavalry;
-                const bool seeking = result == BattleResult::Ongoing && !f.defeated() && approachingEnemy && (!f.moving || cavalry) && g.attackTarget >= 0;
+                const bool withinPursuit = g.attackTarget >= 0 && (cavalry || f.groupUnit(id) == UnitType::Archer ||
+                    battleDistance(p,positions[1-team][g.attackTarget]) < 16);
+                const bool seeking = result == BattleResult::Ongoing && !f.defeated() && approachingEnemy && (!f.moving || cavalry) && withinPursuit;
                 if (seeking) {
                     const auto q = positions[1 - team][g.attackTarget];
                     const float distance = battleDistance(p, q);
@@ -686,20 +695,35 @@ void BattleSimulation::step(float seconds) {
         points[team][id] = formations[team].groupPosition(id);
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
         auto& g = formations[team].organization.smallGroups[id];
+        const int previousTarget = g.attackTarget;
         g.attackTarget = -1;
         g.activeFighters = 0;
         g.activeOpponents = {};
         g.canAttack = false;
         g.combatWait = CombatWait::NoTarget;
+        g.awareness = {};
+        const auto unit = formations[team].groupUnit(id);
+        const float sight = unit == UnitType::Archer ? 36.0f : unit == UnitType::Cavalry ? 32.0f : 24.0f;
+        g.awareness.sightRange = sight;
+        if (!g.routed && g.strength > 0) for (unsigned otherTeam = 0; otherTeam < 2; ++otherTeam) for (unsigned other = 0; other < 25; ++other) {
+            const auto& h = beforeMove[otherTeam].organization.smallGroups[other];
+            if (h.routed || h.strength <= 0) continue;
+            const float distance = battleDistance(points[team][id],points[otherTeam][other]);
+            if (otherTeam != team && distance < sight) ++g.awareness.enemies;
+            if (distance > 12 || h.resting) continue;
+            if (otherTeam == team) { g.awareness.alliedStrength += h.strength; if (other != id) ++g.awareness.allies; }
+            else g.awareness.enemyStrength += h.strength;
+        }
+        g.awareness.cautious = g.morale < 50 && g.awareness.enemyStrength > g.awareness.alliedStrength * 1.5f;
         if (g.routed || g.resting || g.strength <= 0) continue;
         const bool ranged = formations[team].groupUnit(id) == UnitType::Archer;
-        float nearest = ranged ? BowProfile::maxRange : 16;
+        float bestScore = 1000;
         bool targetBlocked = true;
         for (unsigned other = 0; other < 25; ++other) {
             const auto& enemy = formations[1 - team].organization.smallGroups[other];
             if (enemy.routed || enemy.strength <= 0) continue;
             const float distance = battleDistance(points[team][id], points[1 - team][other]);
-            if (distance >= (ranged ? BowProfile::maxRange : 16) || distance < (ranged ? BowProfile::minRange : 0.001f)) continue;
+            if (distance >= sight || distance < (ranged ? BowProfile::minRange : 0.001f)) continue;
             const auto p = points[team][id], q = points[1 - team][other];
             const bool inRange = distance <= combatProfile(formations[team].groupUnit(id)).groupRange;
             const BattlePoint end = inRange ? q : BattlePoint{q.x - (q.x - p.x) * combatProfile(formations[team].groupUnit(id)).stopDistance / distance,
@@ -714,9 +738,17 @@ void BattleSimulation::step(float seconds) {
                     if (segmentDistance(p, end, points[blockerTeam][blocker]) < clearance) { blocked = true; break; }
                 }
             if (ranged) blocked = !clearShot({team, id, other, p, q});
-            // 最も近い相手の陰で停止し続けず、攻撃線・接近経路の空いた候補を優先する。
-            if (g.attackTarget < 0 || (!blocked && targetBlocked) || (blocked == targetBlocked && distance < nearest)) {
-                nearest = distance; g.attackTarget = static_cast<int>(other); targetBlocked = blocked;
+            // 通れる候補を最優先。射程内と現在の目標を優先し、騎馬は槍正面を避ける。
+            float score = distance - (inRange ? 8.0f : 0) - (previousTarget == static_cast<int>(other) ? .75f : 0);
+            if (unit == UnitType::Cavalry) {
+                const float heading = beforeMove[1-team].organization.smallGroups[other].heading;
+                const float facing = ((p.x-q.x)*std::cos(heading)+(p.z-q.z)*std::sin(heading))/distance;
+                if (formations[1-team].groupUnit(other) == UnitType::Spearman && facing >= .5f && enemy.morale > 40) score += 6;
+                if (formations[1-team].groupUnit(other) == UnitType::Archer) score -= 3;
+                score += 1.5f * (enemy.morale / 100 + enemy.strength / enemy.nominalStrength);
+            }
+            if (g.attackTarget < 0 || (!blocked && targetBlocked) || (blocked == targetBlocked && score < bestScore)) {
+                bestScore = score; g.attackTarget = static_cast<int>(other); targetBlocked = blocked;
             }
         }
         const auto p = points[team][id];
@@ -829,6 +861,24 @@ void BattleSimulation::step(float seconds) {
         if (formationsTouch || localContact) { f.moving = false; f.state = FormationState::Engaged; }
         f.strength = std::max(0.0f, f.strength - actualLoss);
         if (actualLoss > 0) f.cohesion = std::max(0.0f, f.cohesion - 1.5f * seconds - actualLoss * 0.08f);
+    }
+}
+void BattleSimulation::updateDecisions() {
+    for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
+        auto& f = formations[team]; auto& g = f.organization.smallGroups[id];
+        auto& decision = g.awareness.decision;
+        if (g.routed || f.defeated()) decision = TacticalDecision::Retreat;
+        else if (result != BattleResult::Ongoing || !f.maneuverEnabled) decision = TacticalDecision::Hold;
+        else if (g.resting || g.route == SmallGroupRoute::Returning || g.route == SmallGroupRoute::ReliefWithdraw ||
+            g.route == SmallGroupRoute::ReliefReserve || g.route == SmallGroupRoute::ReliefCorridor) decision = TacticalDecision::Recover;
+        else if (g.canAttack) decision = TacticalDecision::Engage;
+        else if (g.route == SmallGroupRoute::Outward || g.route == SmallGroupRoute::Forward || g.detourTarget >= 0) decision = TacticalDecision::Flank;
+        else if (g.awareness.cautious && !f.moving) decision = TacticalDecision::Reserve;
+        else if (g.attackTarget >= 0 && !f.moving && f.groupUnit(id) != UnitType::Cavalry && f.groupUnit(id) != UnitType::Archer &&
+            battleDistance(f.groupPosition(id),formations[1-team].groupPosition(g.attackTarget)) >= 16) decision = TacticalDecision::Reserve;
+        else if (g.state == SmallGroupState::Advancing || g.attackTarget >= 0) decision =
+            g.combatWait == CombatWait::PathBlocked || g.combatWait == CombatWait::Obstructed ? TacticalDecision::Reserve : TacticalDecision::Advance;
+        else decision = TacticalDecision::Search;
     }
 }
 void BattleSimulation::updateFaceDeployments(float seconds) {

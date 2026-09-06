@@ -91,6 +91,7 @@ private:
     std::array<std::array<double, 25>, 2> nextImpactTime{};
     void step(float seconds);
     void updateSmallGroups(float seconds);
+    void updateDecisions();
     void updateRouts(float seconds);
     void updateFaceDeployments(float seconds);
     void updateArrows(float seconds, std::array<std::array<float, 25>, 2>& damage, const std::array<bool, 2>& moved);

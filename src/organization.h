@@ -8,6 +8,14 @@
 enum class SmallGroupState { Waiting, Advancing, Engaged, Retreating, Fleeing, Routed };
 enum class SmallGroupRoute { None, Outward, Forward, Returning, ReliefReserve, ReliefWithdraw, ReliefCorridor };
 enum class CombatWait { None, NoTarget, OutOfRange, Turning, Obstructed, PathBlocked, Held, Returning, Detouring };
+enum class TacticalDecision { Search, Advance, Engage, Flank, Reserve, Recover, Hold, Retreat };
+struct TacticalAwareness {
+    unsigned enemies = 0, allies = 0;
+    float enemyStrength = 0, alliedStrength = 0;
+    float sightRange = 0;
+    bool cautious = false;
+    TacticalDecision decision = TacticalDecision::Search;
+};
 struct SmallGroup {
     unsigned nominalStrength = 20;
     float strength = 20;
@@ -37,6 +45,7 @@ struct SmallGroup {
     int attackTarget = -1;
     bool canAttack = false;
     CombatWait combatWait = CombatWait::NoTarget;
+    TacticalAwareness awareness;
     float approachX = 0, approachZ = 0;
     int detourTarget = -1;
     float detourX = 0, detourZ = 0;

@@ -122,6 +122,11 @@ struct WindowState {
             group.canAttack && simulation.result == BattleResult::Ongoing ? L"攻撃" : group.state == SmallGroupState::Engaged ? L"接敵" : group.state == SmallGroupState::Retreating ? L"撤退" :
             group.state == SmallGroupState::Advancing ? L"前進" : L"待機";
         text += L" " + std::wstring(action);
+        const wchar_t* decisions[] = {L"索敵",L"接近",L"交戦",L"側方展開",L"予備待機",L"交代・回復",L"命令待機",L"撤退"};
+        text += L" [判断:" + std::wstring(decisions[static_cast<unsigned>(group.awareness.decision)]) +
+            L" 索敵" + std::to_wstring(group.awareness.enemies) + L"敵・近隣" + std::to_wstring(group.awareness.allies) + L"味方" +
+            (group.awareness.cautious ? L"・局所劣勢" : L"") +
+            (group.attackTarget >= 0 ? L" 目標小組" + std::to_wstring(group.attackTarget+1) : L"") + L"]";
         if (simulation.formations[selected].groupUnit(selectedGroup) == UnitType::Cavalry)
             text += L" [騎馬・突撃" + std::to_wstring(group.charges) + L"回" +
                 (simulation.time - group.lastCharge < 1 ? L"・突撃命中]" : group.chargeDistance > 0 ? L"・助走中]" : L"]");
