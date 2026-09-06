@@ -35,15 +35,54 @@ int main(){
         require(rejected && a.formations[0].unit==UnitType::Samurai,"Unsupported unit entered melee battle");
         // 表示の攻撃も刀の短い個体間距離を守る。
         BattleSimulation visualBattle;visualBattle.reset(UnitType::Samurai);visualBattle.running=true;
-        SoldierVisuals visuals;bool observed=false;
+        SoldierVisuals visuals;bool observed=false, checkedTurn=false;
         for(unsigned frame=0;frame<300;++frame){
+            const auto previous=visuals.soldiers;
             visualBattle.update(.05f);visuals.update(visualBattle);
+            if(!previous.empty())for(unsigned id=0;id<previous.size();++id)
+                require(std::abs(std::remainder(visuals.soldiers[id].heading-previous[id].heading,6.283185307f))
+                    <=movementProfile(UnitType::Samurai).turnRate*.05f+.0001f,"Individual turned instantly during combat");
             for(const auto& s:visuals.soldiers)if(s.attacking){
                 observed=true;const auto& target=visuals.soldiers[static_cast<unsigned>(s.attackTarget)];
                 require(std::hypot(s.position.x-target.position.x,s.position.z-target.position.z)<=1.5001f,"Long-distance sword animation");
+                const float bearing=std::atan2(target.position.z-s.position.z,target.position.x-s.position.x);
+                require(std::abs(std::remainder(bearing-s.heading,6.283185307f))<=.3501f,"Individual attacked without facing enemy");
+                if(!checkedTurn) {
+                    auto turningBattle=visualBattle;auto turningVisuals=visuals;
+                    const auto id=static_cast<unsigned>(&s-visuals.soldiers.data());
+                    turningVisuals.soldiers[id].heading=bearing+3.141592654f;
+                    turningBattle.time+=.01;turningVisuals.update(turningBattle);
+                    require(!turningVisuals.soldiers[id].attacking,"Backward soldier attacked before turning");
+                    checkedTurn=true;
+                }
             }
         }
         require(observed,"No sword attacks were displayed");
+        // 持ち場を離しても表示兵士が瞬間的に吸い寄せられず、停止後は整列する。
+        for(const auto type:{UnitType::Spearman,UnitType::Samurai}) {
+            BattleSimulation following;following.reset(type);
+            SoldierVisuals followers;followers.update(following);
+            const auto start=followers.soldiers[0].position;
+            following.formations[0].x+=10;
+            constexpr double dt=1.0/60;
+            for(unsigned frame=0;frame<600;++frame){
+                const auto before=followers.soldiers[0];
+                following.time+=dt;followers.update(following);
+                const auto& after=followers.soldiers[0];
+                require(std::abs(std::remainder(after.heading-before.heading,6.283185307f))
+                    <=movementProfile(type).turnRate*dt+.0001f,"Follower turned instantly");
+                require(std::hypot(after.position.x-before.position.x,after.position.z-before.position.z)
+                    <=following.formations[0].speed*1.5f*dt+.0031f,"Follower exceeded travel limit");
+                require(after.followSpeed-before.followSpeed<=movementProfile(type).acceleration*1.15f*dt+.0001f,
+                    "Follower accelerated instantly");
+            }
+            require(std::abs(followers.soldiers[0].position.x-start.x-10)<.01f,"Follower did not settle at its slot");
+            const auto paused=followers.soldiers[0];followers.update(following);
+            require(followers.soldiers[0].position.x==paused.position.x && followers.soldiers[0].followSpeed==paused.followSpeed,
+                "Paused follower moved");
+            following.reset(type);followers.update(following);
+            require(followers.soldiers[0].followSpeed==0 && followers.soldiers[0].position.x==start.x,"Follower reset retained momentum");
+        }
         std::cout<<"PASS: sword range, facing, obstruction, pause, fixed updates and individual reach\n";return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

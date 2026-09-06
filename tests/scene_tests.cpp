@@ -315,6 +315,9 @@ int wmain(int argc, wchar_t** argv) {
                 f.state = FormationState::Engaged;
                 const float forwardX = direction.x * (team == 0 ? 1 : -1);
                 const float forwardZ = direction.y * (team == 0 ? 1 : -1);
+                // 命中時刻の検証は敵を正面に捉えた状態から始める。旋回は別途検証する。
+                f.heading = std::atan2(forwardZ, forwardX);
+                for (auto& group : f.organization.smallGroups) group.heading = f.heading;
                 const unsigned hurtGroup = forwardX > 0 ? 14 : forwardX < 0 ? 10 : forwardZ > 0 ? 22 : 2;
                 unsigned members = 0;
                 for (unsigned id = 0; id < SoldierVisuals::perTeam; ++id)

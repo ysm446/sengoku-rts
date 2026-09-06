@@ -37,6 +37,9 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
         }
     }
     const double dt = std::max(0.0, simulation.time - time);
+    std::vector<float> desiredHeadings;
+    desiredHeadings.reserve(soldiers.size());
+    for (const auto& soldier : soldiers) desiredHeadings.push_back(soldier.heading);
     if (dt > 0) {
         for (unsigned team = 0; team < 2; ++team) {
             const auto& formation = simulation.formations[team];
@@ -83,14 +86,22 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
         const float targetZ = formation.z + relative.y + group.displacementZ(soldier.smallGroup) + std::cos(id * 1.7f) * disorder;
         const float dx = targetX - soldier.position.x, dz = targetZ - soldier.position.z;
         const float distance = std::hypot(dx, dz);
-        // 個体ごとの追従速度。経路や損害を決める部隊Simulationへは書き戻さない。
+        // 隊列確認と同じ加速値で持ち場へ追従する。遠い持ち場への急加速を制限する。
+        // 表示密度と実兵力は異なるため、経路や損害を決めるSimulationへは書き戻さない。
         const float follow = static_cast<float>(1 - std::exp(-(4 + variation * 5) * dt));
-        soldier.position.x += dx * follow; soldier.position.z += dz * follow;
-        const float remaining = distance * (1 - follow);
+        const auto movement = movementProfile(formation.unit);
+        const float maxSpeed = formation.speed * (group.routed || formation.defeated() ? 2.0f : 1.5f);
+        const float wanted = std::min(maxSpeed, distance * follow / static_cast<float>(dt));
+        const float acceleration = movement.acceleration * (0.85f + variation * 0.3f);
+        soldier.followSpeed += std::clamp(wanted - soldier.followSpeed,
+            -acceleration * 2 * static_cast<float>(dt), acceleration * static_cast<float>(dt));
+        const float travel = std::min(distance, soldier.followSpeed * static_cast<float>(dt));
+        if (distance > 0) { soldier.position.x += dx / distance * travel; soldier.position.z += dz / distance * travel; }
+        const float remaining = distance - travel;
         soldier.walking = remaining > 0.003f || (formation.moving && distance > 0.001f);
-        if (remaining <= 0.003f) { soldier.position.x = targetX; soldier.position.z = targetZ; }
-        if (soldier.walking && distance > 0.001f) soldier.heading = std::atan2(dz, dx);
-        else if (!group.routed) soldier.heading = group.heading;
+        if (remaining <= 0.003f) { soldier.position.x = targetX; soldier.position.z = targetZ; soldier.followSpeed = 0; }
+        if (soldier.walking && distance > 0.001f) desiredHeadings[i] = std::atan2(dz, dx);
+        else if (!group.routed) desiredHeadings[i] = group.heading;
         soldier.position.y = terrainHeight(soldier.position.x, soldier.position.z) + 0.03f;
     }
     if (dt > 0) {
@@ -173,9 +184,13 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
                     }
                     const float reach = meleeProfile(formation.unit).individualRange;
                     if (nearest > reach * reach) continue;
-                    s.attacking = true; s.attackTarget = target; s.walking = false;
                     const auto& opponent = soldiers[static_cast<unsigned>(target)];
-                    s.heading = std::atan2(opponent.position.z - s.position.z, opponent.position.x - s.position.x);
+                    desiredHeadings[id] = std::atan2(opponent.position.z - s.position.z, opponent.position.x - s.position.x);
+                    const float turned = turnToward(s.heading, desiredHeadings[id],
+                        movementProfile(formation.unit).turnRate * static_cast<float>(dt));
+                    // 接近後も向き直る時間を必要とし、背を向けたまま攻撃しない。
+                    if (std::abs(std::remainder(desiredHeadings[id] - turned, 6.283185307f)) > 0.35f) continue;
+                    s.attacking = true; s.attackTarget = target; s.walking = false;
                     const float variation = static_cast<float>(((id % perTeam) * 53) % 101) / 100;
                     const double next = s.animationTime + dt * (0.85 + variation * 0.3);
                     if (std::floor(next - 0.5) > std::floor(s.animationTime - 0.5)) {
@@ -195,6 +210,10 @@ void SoldierVisuals::update(const BattleSimulation& simulation) {
         }
         for (unsigned id = 0; id < soldiers.size(); ++id) {
             auto& soldier = soldiers[id];
+            if (soldier.life == SoldierLife::Alive) {
+                soldier.heading = turnToward(soldier.heading, desiredHeadings[id],
+                    movementProfile(simulation.formations[id / perTeam].unit).turnRate * static_cast<float>(dt));
+            }
             if (soldier.life == SoldierLife::Alive && (soldier.walking || soldier.attacking)) {
                 const float variation = static_cast<float>(((id % perTeam) * 53) % 101) / 100;
                 soldier.animationTime += dt * (0.85 + variation * 0.3);

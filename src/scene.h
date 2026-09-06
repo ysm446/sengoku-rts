@@ -31,6 +31,7 @@ struct SoldierVisual {
     DirectX::XMFLOAT3 position{};
     DirectX::XMFLOAT2 slot{};
     float heading = 0;
+    float followSpeed = 0;
     double animationTime = 0;
     double deathTime = 0;
     bool walking = false;
