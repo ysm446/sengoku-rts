@@ -19,6 +19,7 @@ struct SmallGroup {
     float fatigue = 0;
     float heading = 0;
     FaceDeployment faceDeployment;
+    float activeFighters = 0;
     int attackTarget = -1;
     bool canAttack = false;
     CombatWait combatWait = CombatWait::NoTarget;

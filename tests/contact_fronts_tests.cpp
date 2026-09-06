@@ -39,6 +39,16 @@ int main() {
             "Simultaneous front and rear contacts lost their opponents");
         const auto close = [](float a, float b) { return std::abs(a - b) < 0.0001f; };
         const auto oneFace = allocateContactFronts(frontal, 20);
+        FaceDeployment partial;partial.accountedStrength=20;partial.deployed[0]=2;
+        require(close(participatingContactFronts(frontal,partial,20).fighters(),2),"Reserves attacked before deployment");
+        require(close(participatingContactFronts(frontal,partial,40).fighters(),2),"Extra reserves increased active fighters");
+        partial.deployed[0]=10;
+        require(close(participatingContactFronts(frontal,partial,20).fighters(),5),"Active fighters exceeded contact width");
+        ContactFronts narrow=frontal;narrow.faces[0].enemyWidths[0]=.9f;
+        require(close(participatingContactFronts(narrow,partial,20).fighters(),1),"Narrow contact retained full attack strength");
+        partial.deployed[2]=10;
+        const auto scarce=participatingContactFronts(twoSides,partial,3);
+        require(close(scarce.fighters(),3) && close(scarce.reserve,0),"Two fronts duplicated surviving fighters");
         require(close(oneFace.faces[0].fighters(), 5) && close(oneFace.reserve, 15),
             "Narrow frontage committed the entire group");
         const auto moreReserves = allocateContactFronts(frontal, 40);

@@ -2,7 +2,7 @@
 #include "combat_geometry.h"
 #include <array>
 
-// 観察用の近似モデル。正面・右・背面・左の各面を16区間で測る。
+// 接触面の近似モデル。正面・右・背面・左の各面を16区間で測る。
 struct ContactBody { BattlePoint position{}; float heading = 0; bool present = false; bool fighting = false; };
 struct ContactFace {
     std::array<float, 25> enemyWidths{};
@@ -66,6 +66,22 @@ inline ContactAllocation allocateContactFronts(const ContactFronts& fronts, floa
             static_cast<double>(ContactAllocation::widthPerFighter) * ratio));
         result.faces[face].enemyFighters[enemy] = allocated;
         result.reserve = std::max(0.0f, result.reserve - allocated);
+    }
+    return result;
+}
+inline ContactAllocation participatingContactFronts(const ContactFronts& fronts, const FaceDeployment& deployment, float strength) {
+    ContactAllocation result;
+    result.reserve = std::max(0.0f, strength);
+    const float retained = deployment.total() > strength && deployment.total() > 0 ? std::max(0.0f, strength) / deployment.total() : 1;
+    for (unsigned face = 0; face < 4; ++face) {
+        const float width = fronts.faces[face].width();
+        if (width <= 0) continue;
+        const float available = std::min(deployment.deployed[face] * retained, width / ContactAllocation::widthPerFighter);
+        for (unsigned enemy = 0; enemy < 25; ++enemy) {
+            const float fighters = std::min(result.reserve, available * fronts.faces[face].enemyWidths[enemy] / width);
+            result.faces[face].enemyFighters[enemy] = fighters;
+            result.reserve -= fighters;
+        }
     }
     return result;
 }

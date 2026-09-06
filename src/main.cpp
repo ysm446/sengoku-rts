@@ -130,11 +130,11 @@ struct WindowState {
                 return std::to_wstring(tenths / 10) + L"." + std::to_wstring(tenths % 10);
             };
             const wchar_t* names[] = {L"前", L"右", L"後", L"左"};
-            text += L" [配置試算 現在→目標";
+            text += L" [面配置 現在→目標";
             for (unsigned face = 0; face < 4; ++face) if (fronts.faces[face].width() > 0 || group.faceDeployment.deployed[face] > 0.01f) {
                 text += std::wstring(L" ") + names[face] + decimal(group.faceDeployment.deployed[face]) + L"→" + decimal(allocation.faces[face].fighters()) + L"人";
             }
-            text += L" 予備" + decimal(group.faceDeployment.reserve()) + L"人]";
+            text += L" 予備" + decimal(group.faceDeployment.reserve()) + L"人 攻撃参加" + decimal(group.activeFighters) + L"人]";
         }
         if (simulation.result == BattleResult::Ongoing && !group.routed && !group.canAttack && group.route == SmallGroupRoute::None && !simulation.formations[static_cast<unsigned>(selected)].defeated()) {
             const wchar_t* reason = group.combatWait == CombatWait::NoTarget ? L"近くに攻撃対象なし" :
@@ -638,7 +638,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (options.smoke && frame >= smokeFrames) break;
         }
         if (options.smoke) {
-            if (options.combatTest && (!observedCombat || !observedRetreat || !observedAttack || (!observedFrontRelief && !options.swordBattle) || !observedLocalRout || state.simulation.result != BattleResult::RedVictory ||
+            // 前列交代の成立条件はsimulation_testsの専用配置で検証する。通常戦闘では敗走が先行しうる。
+            if (options.combatTest && (!observedCombat || !observedRetreat || !observedAttack || !observedLocalRout || state.simulation.result != BattleResult::RedVictory ||
                 !state.simulation.formations[1].defeated()))
                 throw std::runtime_error("Combat smoke failed: combat=" + std::to_string(observedCombat) +
                     " relief=" + std::to_string(observedFrontRelief) + " localRout=" + std::to_string(observedLocalRout) +

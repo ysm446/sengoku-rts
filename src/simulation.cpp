@@ -479,6 +479,7 @@ void BattleSimulation::step(float seconds) {
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
         auto& g = formations[team].organization.smallGroups[id];
         g.attackTarget = -1;
+        g.activeFighters = 0;
         g.canAttack = false;
         g.combatWait = CombatWait::NoTarget;
         if (g.routed || g.strength <= 0) continue;
@@ -513,6 +514,11 @@ void BattleSimulation::step(float seconds) {
         g.heading = turnToward(g.heading, targetHeading, meleeProfile(formations[team].unit).turnRate * seconds);
     }
     bool localContact = false;
+    std::array<std::array<ContactBody, 25>, 2> contactBodies{};
+    for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
+        const auto& g = formations[team].organization.smallGroups[id];
+        contactBodies[team][id] = {points[team][id], g.heading, g.strength > 0, g.strength > 0 && !g.routed};
+    }
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
         const auto& f = formations[team];
         auto& g = formations[team].organization.smallGroups[id];
@@ -538,7 +544,10 @@ void BattleSimulation::step(float seconds) {
         const auto& victim = formations[1 - team].organization.smallGroups[g.attackTarget];
         const float defense = (std::cos(victim.heading) * (p.x - q.x) + std::sin(victim.heading) * (p.z - q.z)) / distance;
         const float directionBonus = defense < -0.5f ? 1.5f : defense < 0.5f ? 1.25f : 1.0f;
-        damage[1 - team][g.attackTarget] += meleeProfile(f.unit).damagePerSecond * (g.strength / 20) * (0.5f + f.cohesion / 200) *
+        const auto participation = participatingContactFronts(measureContactFronts(contactBodies, team, id), g.faceDeployment, g.strength);
+        for (const auto& face : participation.faces) g.activeFighters += face.enemyFighters[g.attackTarget];
+        // 幅4.5・一人幅0.9の正面一列（5人）を基準とする。予備兵は攻撃力へ加算しない。
+        damage[1 - team][g.attackTarget] += meleeProfile(f.unit).damagePerSecond * (g.activeFighters / 5) * (0.5f + f.cohesion / 200) *
             (0.5f + g.morale / 200) * directionBonus * seconds;
     }
     for (unsigned i = 0; i < formations.size(); ++i) {
@@ -564,7 +573,7 @@ void BattleSimulation::updateFaceDeployments(float seconds) {
     }
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {
         auto& g = formations[team].organization.smallGroups[id];
-        if (g.routed || g.strength <= 0 || result != BattleResult::Ongoing) { g.faceDeployment = {}; continue; }
+        if (g.routed || g.strength <= 0 || result != BattleResult::Ongoing) { g.faceDeployment = {}; g.activeFighters = 0; continue; }
         const bool returning = g.route == SmallGroupRoute::Returning || g.route == SmallGroupRoute::ReliefReserve || g.route == SmallGroupRoute::ReliefWithdraw;
         const auto fronts = returning ? ContactFronts{} : measureContactFronts(bodies, team, id);
         advanceFaceDeployment(g.faceDeployment, allocateContactFronts(fronts, g.strength), g.strength, seconds);

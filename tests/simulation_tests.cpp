@@ -163,6 +163,19 @@ int main() {
         require(distant.formations[0].strength == 500 && distant.formations[1].strength == 500,
             "Rectangular contact caused damage outside physical range");
         auto frontal = duel({7, 0}); frontal.update(0.1f);
+        auto undeployed=duel({7,0});undeployed.update(1.0f/60);
+        require(undeployed.formations[1].strength==500,"Undeployed reserves dealt instant damage");
+        auto prepared=duel({7,0}),deep=duel({7,0}),partial=duel({7,0});
+        for(auto* fixture:{&prepared,&deep,&partial}) {
+            auto& g=fixture->formations[0].organization.smallGroups[12];
+            g.faceDeployment.accountedStrength=20;g.faceDeployment.deployed[0]=fixture==&partial?2.0f:5.0f;
+        }
+        deep.formations[0].strength+=20;deep.formations[0].organization.smallGroups[12].strength+=20;
+        prepared.update(.1f);deep.update(.1f);partial.update(.1f);
+        require(std::abs(prepared.formations[1].strength-deep.formations[1].strength)<.001f,
+            "Adding reserves increased damage through unchanged frontage");
+        require(partial.formations[1].strength>prepared.formations[1].strength && prepared.formations[1].strength<500,
+            "Deployed fighters did not control actual damage");
         require(frontal.formations[0].strength < 500 && frontal.formations[1].strength < 500,
             "Nearby groups outside army contact failed to attack");
         auto rearAttack = duel({7, 0});
@@ -681,10 +694,15 @@ int main() {
         for (unsigned id = 20; id < 25; ++id) depleted.formations[0].organization.smallGroups[id].strength = 0.01f;
         depleted.formations[0].strength = 400.05f;
         depleted.toggle(); depleted.update(2);
-        require(std::abs(depleted.formations[0].strength - 400) < 0.01f, "Exhausted front passed damage into reserves");
-        for (unsigned id = 0; id < 25; ++id)
-            require(depleted.formations[0].organization.smallGroups[id].strength == (id < 20 ? 20.0f : 0.0f),
+        float remainingFront = 0;
+        for (unsigned id = 0; id < 25; ++id) {
+            const auto& g = depleted.formations[0].organization.smallGroups[id];
+            require(id < 20 ? g.strength == 20.0f : g.strength >= 0 && g.strength <= .01f,
                 "Group strength underflowed or rear took overflow damage");
+            if (id >= 20) { remainingFront += g.strength; require(g.routed || g.strength == 0,"Exhausted front kept fighting"); }
+        }
+        // 配置に時間が必要なため、敵の攻撃開始前に敗走した端数兵力は生存しうる。
+        require(std::abs(depleted.formations[0].strength - 400 - remainingFront) < .001f,"Exhausted front passed damage into reserves");
         for (bool lowMorale : {false, true}) {
             BattleSimulation reserves;
             auto& unfit = reserves.formations[0].organization.smallGroups[15];
