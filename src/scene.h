@@ -68,7 +68,7 @@ struct Scene {
     static constexpr unsigned attackFrames = 8;
     static constexpr unsigned attackRow = 1 + walkFrames;
     static constexpr unsigned unitTileCount = atlasColumns * (1 + walkFrames + attackFrames);
-    static constexpr unsigned tileCount = unitTileCount * 3;
+    static constexpr unsigned tileCount = unitTileCount * 4;
     static constexpr unsigned atlasWidth = tileWidth * atlasColumns;
     static constexpr unsigned atlasHeight = tileHeight * (1 + walkFrames + attackFrames) * 4;
     std::vector<TerrainVertex> terrain;
@@ -77,6 +77,7 @@ struct Scene {
     static constexpr unsigned routMarkerCount = 96 + 25 * 12;
     std::size_t arrowStart = 0;
     std::size_t emotionStart = 0;
+    std::size_t impactStart = 0;
     EmotionSignals emotions;
     static constexpr unsigned arrowCount = 300;
     std::vector<std::uint32_t> atlas;

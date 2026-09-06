@@ -535,6 +535,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         bool observedCombat = false, observedRetreat = false;
         bool observedAttack = false;
         bool observedArrows = false;
+        bool observedSparks = false;
+        bool capturedSparks = false;
         bool observedCavalryAttack = false;
         unsigned observedCharges = 0;
         bool observedFrontRelief = false;
@@ -661,13 +663,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 }
             }
             renderer.updateSprites(activeScene.sprites);
+            bool sparksVisible = false;
+            if (options.combatTest) for (unsigned i = 0; i < BattleSimulation::impactCapacity; ++i)
+                sparksVisible |= activeScene.sprites[activeScene.impactStart+i].tile != 13;
+            observedSparks |= sparksVisible;
             renderer.resize(state.width, state.height);
             const bool captureNow = !options.capture.empty() && (options.smoke ? frame == smokeFrames - 1 : frame == 0);
             const auto capturePath = options.formationPreview && frame==48 ?
                 std::filesystem::path(options.capture.wstring()+L".turn.bmp") : options.combatTest && frame == routCaptureFrame ?
                 std::filesystem::path(options.capture.wstring() + L".rout.bmp") : options.combatTest && frame == 19 ?
-                std::filesystem::path(options.capture.wstring() + L".engaged.bmp") : captureNow ? options.capture : std::filesystem::path{};
+                std::filesystem::path(options.capture.wstring() + L".engaged.bmp") : captureNow ? options.capture :
+                sparksVisible && !capturedSparks ? std::filesystem::path(options.capture.wstring()+L".sparks.bmp") : std::filesystem::path{};
             renderer.render(state.camera, capturePath);
+            if (sparksVisible && capturePath == std::filesystem::path(options.capture.wstring()+L".sparks.bmp")) capturedSparks = true;
             if (options.smoke) renderer.checkDebugMessages();
             titleSeconds += elapsed; ++titleFrames; ++frame;
             if (titleSeconds >= 0.5 || frame == 1) {
@@ -692,6 +700,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (options.smoke && frame >= smokeFrames) break;
         }
         if (options.smoke) {
+            if (options.combatTest && !observedSparks) throw std::runtime_error("Combat damage sparks were not rendered");
             if (options.combatTest && options.mixedBattle && (!observedCavalryAttack || observedCharges == 0))
                 throw std::runtime_error("Mixed cavalry charge or attack display was missing");
             if (options.combatTest && options.mixedBattle && (!observedArrows || state.simulation.volleysFired == 0 || state.simulation.volleysHit == 0))
@@ -716,6 +725,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                    << "Arrow volleys fired: " << state.simulation.volleysFired << '\n'
                    << "Arrow volleys hit: " << state.simulation.volleysHit << '\n'
                    << "Arrows rendered: " << observedArrows << '\n'
+                   << "Damage sparks rendered: " << observedSparks << '\n'
                    << "Cavalry attack rendered: " << observedCavalryAttack << '\n'
                    << "Maximum group charges observed: " << observedCharges << '\n'
                    << "D3D12 debug layer: " << (renderer.debugEnabled() ? "enabled, no warnings/errors" : "unavailable") << '\n';

@@ -45,6 +45,7 @@ void BattleSimulation::reset(UnitType unit, bool mixedBattle) {
     const auto profile = meleeProfile(unit);
     mixed = mixedBattle;
     arrows.clear(); volleysFired = volleysHit = 0;
+    impacts = {}; impactSerial = 0; nextImpactTime = {};
     ++generation;
     running = false; time = 0; accumulator = 0; result = BattleResult::Ongoing;
     // 最小デモの配置と移動先。関ヶ原のデータではない。
@@ -678,6 +679,8 @@ void BattleSimulation::step(float seconds) {
     if (result != BattleResult::Ongoing) return;
     const bool formationsTouch = std::abs(blue.x - red.x) <= 28.001f && std::abs(blue.z - red.z) <= 28.001f;
     std::array<std::array<float, 25>, 2> damage{};
+    std::array<std::array<CombatImpact, 25>, 2> impactCandidates{};
+    std::array<std::array<float, 25>, 2> strongestImpact{};
     std::array<std::array<BattlePoint, 25>, 2> points{};
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id)
         points[team][id] = formations[team].groupPosition(id);
@@ -772,13 +775,23 @@ void BattleSimulation::step(float seconds) {
             const auto& victim = formations[1 - team].organization.smallGroups[target];
             const float defense = (std::cos(victim.heading) * (p.x - targetPoint.x) + std::sin(victim.heading) * (p.z - targetPoint.z)) / targetDistance;
             const float directionBonus = defense < -0.5f ? 1.5f : defense < 0.5f ? 1.25f : 1.0f;
-            damage[1 - team][target] += combatProfile(f.groupUnit(id)).damagePerSecond * (fighters / 5) * (0.5f + f.cohesion / 200) *
+            float strike = combatProfile(f.groupUnit(id)).damagePerSecond * (fighters / 5) * (0.5f + f.cohesion / 200) *
                 (0.5f + g.morale / 200) * directionBonus * seconds;
+            damage[1-team][target] += strike;
+            bool chargeImpact = false;
             if (f.groupUnit(id) == UnitType::Cavalry && g.chargeWindow > 0 && f.maneuverEnabled &&
                 !g.resting && !g.routed && g.route == SmallGroupRoute::None && g.morale > 40) {
                 const bool braced = formations[1-team].groupUnit(target) == UnitType::Spearman && defense >= .5f && victim.morale > 40;
+                strike += fighters * .4f * (braced ? .15f : 1.0f);
                 damage[1-team][target] += fighters * .4f * (braced ? .15f : 1.0f);
+                chargeImpact = true;
                 charged = true;
+            }
+            auto& impact = impactCandidates[1-team][target];
+            if (chargeImpact || (impact.kind != ImpactKind::Charge && strike > strongestImpact[1-team][target])) {
+                impact.position = {(p.x+targetPoint.x)*.5f, (p.z+targetPoint.z)*.5f};
+                impact.kind = chargeImpact ? ImpactKind::Charge : ImpactKind::Melee;
+                strongestImpact[1-team][target] = strike;
             }
         }
         g.canAttack = g.activeFighters > 0;
@@ -797,6 +810,18 @@ void BattleSimulation::step(float seconds) {
         for (unsigned id = 0; id < 25; ++id) {
             auto& g = f.organization.smallGroups[id];
             const float loss = std::min(g.strength, damage[i][id]);
+            if (loss > 0) {
+                auto impact = impactCandidates[i][id];
+                if (g.rangedLoss > beforeMove[i].organization.smallGroups[id].rangedLoss && impact.kind != ImpactKind::Charge) {
+                    impact.position = g.lastRangedImpact; impact.kind = ImpactKind::Arrow;
+                }
+                // 実損害だけ通知する。連続損害は間引き、突撃の初撃は優先して残す。
+                if (time >= nextImpactTime[i][id] || impact.kind == ImpactKind::Charge) {
+                    impact.time = time; impact.team = i; impact.group = id; impact.damage = loss;
+                    impacts[impactSerial++ % impactCapacity] = impact;
+                    nextImpactTime[i][id] = time + .22;
+                }
+            }
             g.strength = std::max(0.0f, g.strength - loss);
             if (loss > 0) { g.morale = std::max(0.0f, g.morale - loss * 2 - seconds * 0.5f); g.lastDamageTime = time; }
             actualLoss += loss;
@@ -856,8 +881,8 @@ void BattleSimulation::updateArrows(float seconds, std::array<std::array<float, 
         if (victim.strength <= 0 || battleDistance(arrow.aim, formations[1 - arrow.team].groupPosition(arrow.target)) > 2.25f) continue;
         const float loss = std::min(arrow.damage, std::max(0.0f, victim.strength - damage[1 - arrow.team][arrow.target]));
         damage[1 - arrow.team][arrow.target] += loss;
-        victim.rangedLoss += loss; victim.lastRangedImpact = arrow.aim;
-        if (loss > 0) ++volleysHit;
+        victim.rangedLoss += loss;
+        if (loss > 0) { victim.lastRangedImpact = arrow.aim; ++volleysHit; }
     }
     std::erase_if(arrows, [](const ArrowVolley& arrow) { return arrow.age >= arrow.duration; });
     for (unsigned team = 0; team < 2; ++team) for (unsigned id = 0; id < 25; ++id) {

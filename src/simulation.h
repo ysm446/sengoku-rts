@@ -10,6 +10,15 @@
 
 enum class FormationState { Idle, Marching, Engaged, Retreating, Routed };
 enum class BattleResult { Ongoing, RedVictory, BlueVictory, Draw };
+enum class ImpactKind { Melee, Arrow, Charge };
+struct CombatImpact {
+    BattlePoint position{};
+    double time = -10;
+    ImpactKind kind = ImpactKind::Melee;
+    unsigned team = 0, group = 0; // 被害側
+    float damage = 0;
+    static constexpr double lifetime = .18;
+};
 
 struct Formation {
     float x = 0, z = 0;
@@ -62,6 +71,9 @@ public:
     bool mixed = false;
     std::vector<ArrowVolley> arrows;
     std::uint64_t volleysFired = 0, volleysHit = 0;
+    static constexpr unsigned impactCapacity = 64;
+    std::array<CombatImpact, impactCapacity> impacts{};
+    std::uint64_t impactSerial = 0;
     void move(unsigned index, float x, float z);
     void hold(unsigned index);
     unsigned nearbyRouts(unsigned team, unsigned group) const;
@@ -76,6 +88,7 @@ public:
     BattleResult result = BattleResult::Ongoing;
 private:
     double accumulator = 0;
+    std::array<std::array<double, 25>, 2> nextImpactTime{};
     void step(float seconds);
     void updateSmallGroups(float seconds);
     void updateRouts(float seconds);

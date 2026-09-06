@@ -68,6 +68,17 @@ void makeAtlas(Scene& scene, const std::filesystem::path& emotionDirectory) {
     // 空きタイル12を地表の点、13を非表示用の透明タイルとして使う。
     for (unsigned y = 12; y < 52; ++y) for (unsigned x = 12; x < 52; ++x)
         scene.atlas[(Scene::tileHeight + y) * Scene::atlasWidth + x] = rgba(255, 255, 255);
+    // 空きタイル36〜38。16pxの火花を4倍で描き、芯→放射→散った粒の3段階にする。
+    for (unsigned frame = 0; frame < 3; ++frame) for (int y = 0; y < 16; ++y) for (int x = 0; x < 16; ++x) {
+        const int dx = std::abs(x-7), dy = std::abs(y-7), radius = std::max(dx,dy);
+        const bool core = frame == 0 && dx+dy <= 2;
+        const bool ray = (dx == 0 || dy == 0 || dx == dy) &&
+            (frame == 0 ? radius <= 4 : frame == 1 ? radius >= 2 && radius <= 6 : radius >= 5 && radius <= 6);
+        if (!core && !ray) continue;
+        const auto color = core ? rgba(255,255,244) : frame == 2 ? rgba(247,171,62) : rgba(255,225,126);
+        for (unsigned sy = 0; sy < 4; ++sy) for (unsigned sx = 0; sx < 4; ++sx)
+            scene.atlas[(192+y*4+sy)*Scene::atlasWidth + frame*64+x*4+sx] = color;
+    }
     // 空きタイル24〜26。32pxの仮アイコンを透明背景へ2倍で描く。
     for (unsigned icon = 0; icon < 3; ++icon) {
         auto box = [&](int x0, int y0, int x1, int y1, std::uint32_t color) {
@@ -232,6 +243,8 @@ Scene makeScene(unsigned soldiers, const SceneOptions& options) {
     for (unsigned i = 0; i < Scene::routMarkerCount; ++i) add(0, 0, 0.5f, 0.5f, 13, white);
     scene.arrowStart = scene.sprites.size();
     for (unsigned i = 0; i < Scene::arrowCount; ++i) add(0, 0, 1, .14f, 13, white);
+    scene.impactStart = scene.sprites.size();
+    for (unsigned i = 0; i < BattleSimulation::impactCapacity; ++i) add(0, 0, 1, 1, 13, white);
     scene.emotionStart = scene.sprites.size();
     for (unsigned i = 0; i < 50; ++i) add(0, 0, 2.4f, 2.4f, 13, white);
     return scene;
@@ -396,6 +409,18 @@ void updateSceneSprites(Scene& scene, const BattleSimulation& simulation, const 
         const auto projection = camera.matrix(aspect);
         // 32pxの図柄を常に2倍表示する。ズームによる縮小・巨大化を避ける。
         const float worldPerPixel = camera.span / (aspect * std::max(1u, viewportHeight));
+        for (unsigned i = 0; i < BattleSimulation::impactCapacity; ++i) {
+            auto& sprite = scene.sprites[scene.impactStart+i];
+            sprite.tile = 13;
+            const auto& impact = simulation.impacts[i];
+            const double age = simulation.time-impact.time;
+            if (age < 0 || age >= CombatImpact::lifetime || impact.damage <= 0) continue;
+            const float pixels = impact.kind == ImpactKind::Charge ? 32.0f : impact.kind == ImpactKind::Arrow ? 14.0f : 20.0f;
+            const auto p = impact.position;
+            const float size = pixels*worldPerPixel;
+            sprite = {{p.x, terrainHeight(p.x,p.z)+1.6f, p.z}, {size,size},
+                36+std::min(2u,static_cast<unsigned>(age/.06)), {1,1,1}, right, up, .5f};
+        }
         const float bubbleSize = 64 * worldPerPixel;
         const float bubbleSpacing = 68 * worldPerPixel;
         for (unsigned i = 0; i < 50; ++i) scene.sprites[scene.emotionStart + i].tile = 13;
