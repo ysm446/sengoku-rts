@@ -497,7 +497,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     const float travel=alignment>=.95f?std::min(distance,f.speed*seconds):0;
                     const Point next{p.x+(target.x-p.x)*travel/distance,p.z+(target.z-p.z)*travel/distance};
                     if(reservedForCentralRelief(id,next)) { g.restBlocked=true;continue; }
-                    g.offsetX+=next.x-p.x;g.offsetZ+=next.z-p.z;
+                    // 休息の退避は一時的な変位とし、回復後に通常の接近・帰還へ引き継ぐ。
+                    g.approachX+=next.x-p.x;g.approachZ+=next.z-p.z;
                     if(travel>0)g.state=SmallGroupState::Retreating;
                 }
                 continue;

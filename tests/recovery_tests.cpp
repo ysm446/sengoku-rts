@@ -31,7 +31,7 @@ int main() {
                 auto& source=f.organization.smallGroups[13];source.routed=true;source.routShock=8;
                 source.fleeX=source.fleeTargetX=sign*6;source.fleeZ=source.fleeTargetZ=0;
             } else {
-                auto& enemy=refuge->formations[1].organization.smallGroups[12];enemy.offsetX=sign*8-refuge->formations[1].x;enemy.offsetZ=0;
+                auto& enemy=refuge->formations[1].organization.smallGroups[12];enemy.offsetX=sign*9.95f-refuge->formations[1].x;enemy.offsetZ=0;
             }
             refuge->update(1.0f/60);require(g.restRelocating,"Threatened resting group did not seek refuge");
             auto frozen=std::make_unique<BattleSimulation>(*refuge);frozen->running=false;frozen->update(2);
@@ -53,6 +53,23 @@ int main() {
                 if(!g.resting) {completed=true;break;}
             }
             require(completed && !g.routed && g.morale>=70 && g.fatigue<=2 && g.strength==16,"Relocated group failed to recover without regenerating casualties");
+            auto returnHeld=std::make_unique<BattleSimulation>(*refuge);returnHeld->hold(0);returnHeld->update(1);
+            require(battleDistance(returnHeld->formations[0].groupPosition(12),f.groupPosition(12))==0,"Hold moved recovered group");
+            auto noTarget=std::make_unique<BattleSimulation>(*refuge);
+            noTarget->formations[1].organization.smallGroups[12].offsetZ=1000;
+            for(unsigned tick=0;tick<600;++tick)noTarget->update(1.0f/60);
+            require(battleDistance(noTarget->formations[0].groupPosition(12),{0,0})<.001f,
+                "Recovered group without a target failed to return to its reserve position");
+            if(!panic) {
+                bool rejoined=false;
+                for(unsigned tick=0;tick<900;++tick) {
+                    const auto before=f.groupPosition(12);refuge->update(1.0f/60);
+                    require(battleDistance(before,f.groupPosition(12))<=f.speed/60+.001f,"Recovered group teleported on return");
+                    require(battleDistance(f.groupPosition(12),refuge->formations[1].groupPosition(12))>=4.5f,"Recovered group crossed enemy occupancy");
+                    if(g.canAttack) {rejoined=true;break;}
+                }
+                require(rejoined,"Recovered group stranded beyond infantry pursuit range");
+            }
         }
         auto healthy = reserves(); healthy.update(10);
         require(healthy.formations[0].readyGroups() == 12 && healthy.result == BattleResult::Ongoing,
