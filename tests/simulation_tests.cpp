@@ -60,6 +60,37 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
     }
 }
 int main() {
+    // 前方2列が敗走しても、元の隊列幅によって後続の進軍を止めない。
+    for(float sign:{-1.0f,1.0f}) {
+        auto depleted=std::make_unique<BattleSimulation>();depleted->running=true;
+        for(unsigned team=0;team<2;++team) {
+            auto& f=depleted->formations[team];f.z=(team==0?-14.0f:14.0f)*sign;f.targetZ=0;
+            for(unsigned id=0;id<25;++id) {
+                auto& g=f.organization.smallGroups[id];g.morale=100;
+                const bool forward=(team==0)==(sign>0)?id/5>=3:id/5<=1;
+                if(forward){g.routed=true;g.routShock=0;g.fleeX=g.fleeTargetX=60;g.fleeZ=g.fleeTargetZ=60+id*5.0f;}
+            }
+        }
+        auto held=std::make_unique<BattleSimulation>(*depleted);held->hold(0);held->hold(1);held->update(1);
+        require(held->formations[0].z==depleted->formations[0].z && held->formations[1].z==depleted->formations[1].z,
+            "Reduced formation bounds ignored hold");
+        bool attacked=false;
+        for(unsigned tick=0;tick<1200 && !attacked;++tick) {
+            const auto previous=std::array<float,2>{depleted->formations[0].z,depleted->formations[1].z};
+            depleted->update(1.0f/60);
+            for(unsigned team=0;team<2;++team) {
+                const auto& f=depleted->formations[team];
+                require(std::abs(f.z-previous[team])<=f.speed/60+.001f,"Reduced formation bounds teleported army");
+                for(unsigned id=0;id<25;++id)if(!f.organization.smallGroups[id].routed) {
+                    attacked|=f.organization.smallGroups[id].canAttack;
+                    for(unsigned other=0;other<25;++other)if(!depleted->formations[1-team].organization.smallGroups[other].routed)
+                        require(battleDistance(f.groupPosition(id),depleted->formations[1-team].groupPosition(other))>=4.5f,
+                            "Reduced formation bounds overlapped surviving groups");
+                }
+            }
+        }
+        require(attacked,"Surviving rear ranks failed to resume combat");
+    }
     try {
         const auto duel = [](BattlePoint target) {
             BattleSimulation test;

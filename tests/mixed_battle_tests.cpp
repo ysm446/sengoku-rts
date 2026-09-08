@@ -153,6 +153,23 @@ void row(unsigned configuration,bool swapped,unsigned team,const Sample& sample)
 }
 int main(int argc,char** argv) {
     try {
+        if(argc==2 && std::string_view(argv[1])=="--stagnation-report") {
+            auto battle=std::make_unique<BattleSimulation>();battle->reset(UnitType::Spearman,true);
+            for(auto& f:battle->formations) {f.x=f.targetX=0;f.morale=100;for(auto& g:f.organization.smallGroups)g.morale=100;}
+            battle->running=true;battle->update(90);
+            std::cout<<"team,group,unit,morale,fatigue,route,wait,decision,target,distance,nearest_enemy,cautious,offset_x,offset_z,approach_x,approach_z\n"<<std::fixed<<std::setprecision(3);
+            for(unsigned team=0;team<2;++team)for(unsigned id=0;id<25;++id) {
+                const auto& f=battle->formations[team];const auto& enemy=battle->formations[1-team];const auto& g=f.organization.smallGroups[id];
+                if(g.routed || g.strength<=0)continue;
+                float nearest=10000;for(unsigned other=0;other<25;++other)if(!enemy.organization.smallGroups[other].routed && enemy.organization.smallGroups[other].strength>0)
+                    nearest=std::min(nearest,battleDistance(f.groupPosition(id),enemy.groupPosition(other)));
+                std::cout<<team<<','<<id<<','<<static_cast<int>(f.groupUnit(id))<<','<<g.morale<<','<<g.fatigue<<','<<static_cast<int>(g.route)<<','
+                    <<static_cast<int>(g.combatWait)<<','<<static_cast<int>(g.awareness.decision)<<','<<g.attackTarget<<','
+                    <<(g.attackTarget<0?-1:battleDistance(f.groupPosition(id),enemy.groupPosition(g.attackTarget)))<<','<<nearest<<','<<g.awareness.cautious<<','
+                    <<g.offsetX<<','<<g.offsetZ<<','<<g.approachX<<','<<g.approachZ<<'\n';
+            }
+            return 0;
+        }
         if(argc==2 && std::string_view(argv[1])=="--relief-report") {
             std::cout<<"configuration,seconds,team,front,reserve,reserve_ready,front_route,reserve_route,reserve_routed,reserve_resting,reserve_fatigue,reserve_strength,reserve_morale,forward_gap,distance,left_blocked_leg,left_blocker_team,left_blocker_id,right_blocked_leg,right_blocker_team,right_blocker_id\n"<<std::fixed<<std::setprecision(3);
             for(unsigned configuration=0;configuration<3;++configuration)measure(configuration,false,180,false,true);
@@ -163,7 +180,7 @@ int main(int argc,char** argv) {
             measure(0,false,180,true);return 0;
         }
         const bool report=argc==2 && std::string_view(argv[1])=="--report";
-        require(argc==1 || report,"Usage: mixed_battle_tests [--report|--rest-report|--relief-report]");
+        require(argc==1 || report,"Usage: mixed_battle_tests [--report|--rest-report|--relief-report|--stagnation-report]");
         if(report)std::cout<<"configuration,swapped,team,seconds,winner,strength,routed,exchanges,rest_started,rest_completed,reused,disengaged,regrouped,charges,attack_group_seconds,rest_group_seconds,blocked_group_seconds,fatigue_recovered,mean_attack_efficiency,relief_started,relief_aborted,front_rout_aborts,reserve_rout_aborts,worn_front_group_seconds,displaced_worn_front_group_seconds,last_attack_s\n"<<std::fixed<<std::setprecision(3);
         for(unsigned configuration=0;configuration<(report?3u:1u);++configuration) {
             const auto original=measure(configuration,false,report?180:30),swapped=measure(configuration,true,report?180:30);

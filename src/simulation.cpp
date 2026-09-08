@@ -911,8 +911,19 @@ void BattleSimulation::step(float seconds) {
     }
     auto& red = formations[0]; auto& blue = formations[1];
     const float dx = blue.x - red.x, dz = blue.z - red.z;
-    // 表示密度や向きに依存しない、半幅14の軸平行な隊列として扱う。
-    const float overlapX = 28 - std::abs(dx), overlapZ = 28 - std::abs(dz);
+    // 敗走・全滅した配置枠を占有し続けない。実移動の衝突はこの後に小組単位で検査する。
+    std::array<BattlePoint,2> lower{},upper{};
+    for(unsigned team=0;team<2;++team) {
+        lower[team]={14,14};upper[team]={-14,-14};bool alive=false;
+        for(const auto& g:formations[team].organization.smallGroups)if(!g.routed && g.strength>0) {
+            const float x=(static_cast<float>(g.slot%5)-2)*5.2f,z=(static_cast<float>(g.slot/5)-2)*5.2f;
+            lower[team].x=std::min(lower[team].x,x-3.6f);lower[team].z=std::min(lower[team].z,z-3.6f);
+            upper[team].x=std::max(upper[team].x,x+3.6f);upper[team].z=std::max(upper[team].z,z+3.6f);alive=true;
+        }
+        if(!alive){lower[team]={-14,-14};upper[team]={14,14};}
+    }
+    const float overlapX=(dx>=0?upper[0].x-lower[1].x:upper[1].x-lower[0].x)-std::abs(dx);
+    const float overlapZ=(dz>=0?upper[0].z-lower[1].z:upper[1].z-lower[0].z)-std::abs(dz);
     if (result == BattleResult::Ongoing && overlapX > 0 && overlapZ > 0) {
         const auto keepInside = [](float& a, float& b) {
             const float shift = std::max(0.0f, -60 - std::min(a, b)) - std::max(0.0f, std::max(a, b) - 60);
