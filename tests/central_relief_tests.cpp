@@ -82,20 +82,30 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--combat-report") { combatReport(); return 0; }
         if (argc != 1) throw std::runtime_error("Usage: central_relief_tests [--combat-report]");
-        for(bool axis:{false,true})for(float sign:{-1.0f,1.0f})for(unsigned team:{0u,1u}) {
-            auto moved=std::make_unique<BattleSimulation>(fixture(axis,sign,team,2,true));
+        for(bool axis:{false,true})for(float sign:{-1.0f,1.0f})for(unsigned team:{0u,1u})for(bool gap:{true,false}) {
+            auto moved=std::make_unique<BattleSimulation>(fixture(axis,sign,team,2,gap));
             const unsigned front=slot(axis,sign>0?4:0,2),rear=slot(axis,sign>0?3:1,2);
             auto& f=moved->formations[team];auto& a=f.organization.smallGroups[front];auto& b=f.organization.smallGroups[rear];
             if(axis){a.approachX=sign*1.5f;b.approachX=sign*.5f;}else{a.approachZ=sign*1.5f;b.approachZ=sign*.5f;}
+            if(!gap)for(unsigned id=0;id<25;++id)if(id!=front && id!=rear) {
+                auto& h=f.organization.smallGroups[id];
+                if(axis){h.approachX=sign*.3f;h.approachZ=.15f;}else{h.approachZ=sign*.3f;h.approachX=.15f;}
+            }
+            std::array<BattlePoint,25> original{};
+            for(unsigned id=0;id<25;++id)original[id]=f.groupPosition(id);
             const auto head=f.groupPosition(front),tail=f.groupPosition(rear);
-            bool started=false,completed=false;
-            for(unsigned tick=0;tick<1800;++tick) {
+            bool started=false,completed=false,exchanged=false;unsigned helpers=0;
+            for(unsigned tick=0;tick<3600;++tick) {
+                std::array<BattlePoint,25> previous{};
+                for(unsigned id=0;id<25;++id)previous[id]=f.groupPosition(id);
                 const auto previousHead=f.groupPosition(front),previousRear=f.groupPosition(rear);
                 for(auto& enemy:moved->formations[1-team].organization.smallGroups)enemy.faceDeployment={};
                 moved->update(1.0f/60);
                 started|=f.organization.frontReliefs[3].displaced;
                 if(tick==0) {
                     require(started,"Displaced relief did not reserve its open path immediately");
+                    helpers=f.organization.frontReliefs[3].corridorGroups;
+                    if(!gap)require(helpers!=0 && f.organization.frontReliefs[3].phase==4,"Displaced helpers did not prepare corridor");
                     auto paused=std::make_unique<BattleSimulation>(*moved);paused->running=false;paused->update(1);
                     require(battleDistance(paused->formations[team].groupPosition(front),f.groupPosition(front))==0,"Pause moved displaced front");
                     auto held=std::make_unique<BattleSimulation>(*moved);held->hold(team);held->update(.2f);
@@ -111,15 +121,27 @@ int main(int argc, char** argv) {
                         whole->formations[team].organization.frontReliefs[3].phase==split->formations[team].organization.frontReliefs[3].phase,
                         "Displaced relief depends on update cadence");
                 }
+                for(unsigned id=0;id<25;++id)if(helpers&(1u<<id)) {
+                    require(battleDistance(previous[id],f.groupPosition(id))<=f.speed/60+.001f,"Corridor helper teleported");
+                    for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
+                        if((t==team && id==other) || moved->formations[t].organization.smallGroups[other].strength<=0)continue;
+                        require(battleDistance(f.groupPosition(id),moved->formations[t].groupPosition(other))>=4.5f,"Displaced helper crossed occupancy");
+                    }
+                }
                 require(battleDistance(previousHead,f.groupPosition(front))<=f.speed/60+.001f &&
                     battleDistance(previousRear,f.groupPosition(rear))<=f.speed/60+.001f,"Displaced relief teleported a group");
                 for(unsigned id:{front,rear})for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
                     if((t==team && other==id) || moved->formations[t].organization.smallGroups[other].strength<=0)continue;
                     require(battleDistance(f.groupPosition(id),moved->formations[t].groupPosition(other))>=4.5f,"Displaced relief crossed occupancy");
                 }
-                if(a.slot==rear && b.slot==front) {
+                if(!exchanged && a.slot==rear && b.slot==front) {
                     require(a.resting && battleDistance(f.groupPosition(front),tail)<.001f && battleDistance(f.groupPosition(rear),head)<.001f,
                         "Displaced relief lost actual positions or rest");
+                    exchanged=true;
+                }
+                if(exchanged && f.organization.frontReliefs[3].front<0) {
+                    for(unsigned id=0;id<25;++id)if(helpers&(1u<<id))
+                        require(battleDistance(f.groupPosition(id),original[id])<.04f,"Helper lost its original displaced position");
                     completed=true;break;
                 }
             }

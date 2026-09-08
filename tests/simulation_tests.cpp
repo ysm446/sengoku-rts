@@ -54,7 +54,8 @@ void same(const BattleSimulation& a, const BattleSimulation& b) {
                 g.rear.x==h.rear.x && g.rear.z==h.rear.z,"Displaced relief depends on update interval");
             require(g.front == h.front && g.reserve == h.reserve && g.phase == h.phase &&
                 g.alongX == h.alongX && g.forward == h.forward && g.lateral == h.lateral &&
-                g.corridorGroups == h.corridorGroups && g.corridorShift == h.corridorShift, "Front relief depends on update interval");
+                g.corridorGroups == h.corridorGroups && g.corridorShift == h.corridorShift &&
+                g.corridorOrigin==h.corridorOrigin, "Front relief depends on update interval");
         }
     }
 }

@@ -86,6 +86,7 @@ struct FrontRelief {
     // 4: 通路を開く、5: 交代後に列を戻す。0〜3は既存の交代段階。
     unsigned corridorGroups = 0;
     float corridorShift = 0;
+    std::array<float,25> corridorOrigin{};
     bool displaced = false;
     BattlePoint head{}, rear{}; // 交代開始時の実位置（備中心からの相対座標）。
 };

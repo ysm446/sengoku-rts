@@ -1,4 +1,5 @@
 #include "simulation.h"
+#include "formation_drill.h"
 #include <array>
 #include <cmath>
 #include <iomanip>
@@ -18,7 +19,7 @@ struct Metrics {
     unsigned routed=0;
 };
 struct Sample { std::array<Metrics,2> armies; double elapsed=0; int winner=-1; };
-Sample measure(unsigned configuration,bool swapped,unsigned duration,bool restReport=false) {
+Sample measure(unsigned configuration,bool swapped,unsigned duration,bool restReport=false,bool reliefReport=false) {
     auto battle=std::make_unique<BattleSimulation>();battle->reset(UnitType::Spearman,true);
     if(configuration>0) for(auto& f:battle->formations) { f.morale=100;for(auto& g:f.organization.smallGroups)g.morale=100; }
     if(configuration==2) for(auto& f:battle->formations)f.x=f.targetX=0;
@@ -53,6 +54,45 @@ Sample measure(unsigned configuration,bool swapped,unsigned duration,bool restRe
                 if(!g.routed && !g.resting && (alongX?g.slot%5:g.slot/5)==frontRank &&
                     (g.fatigue>=8 || g.strength<=g.nominalStrength*.75f || g.morale<=50)) {
                     stats.wornFrontSeconds+=dt;
+                    if(reliefReport && tick%60==0) {
+                        const unsigned rearSlot=alongX?g.slot+(frontRank==4?-1:1):g.slot+(frontRank==4?-5:5);
+                        for(unsigned rear=0;rear<25;++rear)if(f.organization.smallGroups[rear].slot==rearSlot) {
+                            const auto& r=f.organization.smallGroups[rear];
+                            const auto p=f.groupPosition(id),q=f.groupPosition(rear);
+                            const float forward=(alongX?p.x-q.x:p.z-q.z)*(frontRank==4?1:-1);
+                            const bool ready=!r.routed && !r.resting && r.fatigue<=2 && r.strength>r.nominalStrength*.5f &&
+                                r.morale>40 && f.groupUnit(rear)!=UnitType::Archer;
+                            // 更新後の実位置による診断。実際の予約判定とは時点が異なる。
+                            float speed=std::max(f.speed,enemy.speed);
+                            for(const auto& army:battle->formations)for(unsigned other=0;other<25;++other)
+                                if(army.groupUnit(other)==UnitType::Cavalry)speed=std::max(speed,movementProfile(UnitType::Cavalry).speed);
+                            const float clearance=4.5f+3*speed*dt;
+                            const unsigned lane=alongX?g.slot/5:g.slot%5;
+                            std::array<int,2> blockedLeg{},blockerTeam{{-1,-1}},blockerId{{-1,-1}};
+                            for(unsigned side=0;side<2;++side) {
+                                const float width=(lane==0 || lane==4?6.1f:5.2f)*(side==0?-1:1);
+                                const BattlePoint shift{alongX?0:width,alongX?width:0};
+                                const BattlePoint ps{p.x+shift.x,p.z+shift.z},qs{q.x+shift.x,q.z+shift.z};
+                                const std::array<BattlePoint,4> from{{q,p,qs,ps}},to{{qs,q,ps,p}},stationary{{p,qs,q,q}};
+                                for(unsigned leg=0;leg<4 && !blockedLeg[side];++leg) {
+                                    if(std::abs(to[leg].x)>76 || std::abs(to[leg].z)>76 || segmentDistance(from[leg],to[leg],stationary[leg])<clearance) {
+                                        blockedLeg[side]=leg+1;blockerTeam[side]=-2;break;
+                                    }
+                                    for(unsigned t=0;t<2 && !blockedLeg[side];++t)for(unsigned other=0;other<25;++other) {
+                                        if((t==team && (other==id || other==rear)) || battle->formations[t].organization.smallGroups[other].strength<=0)continue;
+                                        if(segmentDistance(from[leg],to[leg],battle->formations[t].groupPosition(other))<clearance) {
+                                            blockedLeg[side]=leg+1;blockerTeam[side]=t;blockerId[side]=other;break;
+                                        }
+                                    }
+                                }
+                            }
+                            std::cout<<configuration<<','<<battle->time<<','<<team<<','<<id<<','<<rear<<','<<ready<<','
+                                <<static_cast<int>(g.route)<<','<<static_cast<int>(r.route)<<','<<r.routed<<','<<r.resting<<','
+                                <<r.fatigue<<','<<r.strength<<','<<r.morale<<','<<forward<<','<<battleDistance(p,q);
+                            for(unsigned side=0;side<2;++side)std::cout<<','<<blockedLeg[side]<<','<<blockerTeam[side]<<','<<blockerId[side];
+                            std::cout<<'\n';
+                        }
+                    }
                     if(g.approachX!=0 || g.approachZ!=0 || g.offsetX!=0 || g.offsetZ!=0)stats.displacedFrontSeconds+=dt;
                 }
                 changedSlots[team]+=g.slot!=old.slot;
@@ -113,12 +153,17 @@ void row(unsigned configuration,bool swapped,unsigned team,const Sample& sample)
 }
 int main(int argc,char** argv) {
     try {
+        if(argc==2 && std::string_view(argv[1])=="--relief-report") {
+            std::cout<<"configuration,seconds,team,front,reserve,reserve_ready,front_route,reserve_route,reserve_routed,reserve_resting,reserve_fatigue,reserve_strength,reserve_morale,forward_gap,distance,left_blocked_leg,left_blocker_team,left_blocker_id,right_blocked_leg,right_blocker_team,right_blocker_id\n"<<std::fixed<<std::setprecision(3);
+            for(unsigned configuration=0;configuration<3;++configuration)measure(configuration,false,180,false,true);
+            return 0;
+        }
         if(argc==2 && std::string_view(argv[1])=="--rest-report") {
             std::cout<<"seconds,team,group,morale,fatigue,strength,nearest_enemy,time_since_damage,nearby_routs,routed,relocating,blocked\n"<<std::fixed<<std::setprecision(3);
             measure(0,false,180,true);return 0;
         }
         const bool report=argc==2 && std::string_view(argv[1])=="--report";
-        require(argc==1 || report,"Usage: mixed_battle_tests [--report|--rest-report]");
+        require(argc==1 || report,"Usage: mixed_battle_tests [--report|--rest-report|--relief-report]");
         if(report)std::cout<<"configuration,swapped,team,seconds,winner,strength,routed,exchanges,rest_started,rest_completed,reused,disengaged,regrouped,charges,attack_group_seconds,rest_group_seconds,blocked_group_seconds,fatigue_recovered,mean_attack_efficiency,relief_started,relief_aborted,front_rout_aborts,reserve_rout_aborts,worn_front_group_seconds,displaced_worn_front_group_seconds,last_attack_s\n"<<std::fixed<<std::setprecision(3);
         for(unsigned configuration=0;configuration<(report?3u:1u);++configuration) {
             const auto original=measure(configuration,false,report?180:30),swapped=measure(configuration,true,report?180:30);

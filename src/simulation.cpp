@@ -190,24 +190,69 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                         b.fatigue<=2 && b.strength>b.nominalStrength*.5f && b.morale>40 && f.groupUnit(reserve)!=UnitType::Archer) {
                         const auto head=positions[team][front],rear=positions[team][reserve];
                         const float clearance=4.5f+3*movementLimit*seconds;
+                        unsigned supporters=0;
+                        float shift=0;
                         const auto clear=[&](Point from,Point to,Point stationary) {
                             if (std::abs(to.x)>76 || std::abs(to.z)>76 || segmentDistance(from,to,stationary)<clearance) return false;
                             for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
                                 if ((t==team && (other==static_cast<unsigned>(front) || other==static_cast<unsigned>(reserve))) ||
                                     formations[t].organization.smallGroups[other].strength<=0) continue;
-                                if(segmentDistance(from,to,positions[t][other])<clearance)return false;
+                                auto obstacle=positions[t][other];
+                                if(t==team && (supporters&(1u<<other))) {obstacle.x+=alongX?0:shift;obstacle.z+=alongX?shift:0;}
+                                if(segmentDistance(from,to,obstacle)<clearance)return false;
                             }
                             return true;
                         };
                         const float preferred=(lane<=2?-1.0f:1.0f)*(sideIndex>=2?5.2f:6.1f);
                         if ((alongX?head.x-rear.x:head.z-rear.z)*sign>=clearance && battleDistance(head,rear)<=16)
-                            for(float side:{preferred,-preferred}) {
-                                const Point shift{alongX?0:side,alongX?side:0};
-                                const Point headSide{head.x+shift.x,head.z+shift.z},rearSide{rear.x+shift.x,rear.z+shift.z};
+                            for(unsigned attempt=0;attempt<4;++attempt) {
+                                const float side=attempt%2==0?preferred:-preferred;
+                                supporters=0;shift=side<0?-6.1f:6.1f;
+                                if(attempt>=2) {
+                                    if(sideIndex<2)continue;
+                                    bool movable=true;
+                                    for(unsigned other=0;other<25;++other) {
+                                        const auto& h=f.organization.smallGroups[other];
+                                        const unsigned column=alongX?h.slot/5:h.slot%5;
+                                        if(h.strength<=0 || (side<0?column>=lane:column<=lane))continue;
+                                        if(h.routed || h.resting || h.route!=SmallGroupRoute::None || h.cavalry.phase!=CavalryPhase::None) {movable=false;break;}
+                                        supporters|=1u<<other;
+                                    }
+                                    if(!movable || !supporters)continue;
+                                    // 外側から順に移す。各移動時点の占有と移動後の交代経路を検査する。
+                                    unsigned moved=0;
+                                    for(int column=side<0?0:4;column>=0 && column<5 && movable;column+=side<0?1:-1)
+                                        for(unsigned other=0;other<25 && movable;++other)if((supporters&(1u<<other)) &&
+                                            static_cast<int>(alongX?f.organization.smallGroups[other].slot/5:f.organization.smallGroups[other].slot%5)==column) {
+                                            const auto from=positions[team][other];const Point to{from.x+(alongX?0:shift),from.z+(alongX?shift:0)};
+                                            if(std::abs(to.x)>76 || std::abs(to.z)>76) {movable=false;break;}
+                                            for(unsigned t=0;t<2 && movable;++t)for(unsigned id=0;id<25;++id) {
+                                                if((t==team && id==other) || formations[t].organization.smallGroups[id].strength<=0)continue;
+                                                auto obstacle=positions[t][id];
+                                                if(t==team && (moved&(1u<<id))) {obstacle.x+=alongX?0:shift;obstacle.z+=alongX?shift:0;}
+                                                if(segmentDistance(from,to,obstacle)<clearance) {movable=false;break;}
+                                            }
+                                            moved|=1u<<other;
+                                        }
+                                    if(!movable)continue;
+                                }
+                                const Point lateralStep{alongX?0:side,alongX?side:0};
+                                const Point headSide{head.x+lateralStep.x,head.z+lateralStep.z},rearSide{rear.x+lateralStep.x,rear.z+lateralStep.z};
                                 if(!clear(rear,rearSide,head) || !clear(head,rear,rearSide) ||
                                     !clear(rearSide,headSide,rear) || !clear(headSide,head,rear))continue;
                                 relief={front,reserve,0,alongX,sign*5.2f,side};relief.displaced=true;
                                 relief.head={head.x-f.x,head.z-f.z};relief.rear={rear.x-f.x,rear.z-f.z};
+                                relief.corridorGroups=supporters;relief.corridorShift=supporters?shift:0;
+                                if(supporters) {
+                                    relief.phase=4;
+                                    for(unsigned other=0;other<25;++other)if(supporters&(1u<<other)) {
+                                        auto& h=f.organization.smallGroups[other];
+                                        h.offsetX+=h.approachX;h.offsetZ+=h.approachZ;h.approachX=h.approachZ=0;
+                                        relief.corridorOrigin[other]=alongX?h.offsetZ:h.offsetX;
+                                        h.route=SmallGroupRoute::ReliefCorridor;h.routeAlongX=alongX;
+                                        h.approachSpeed=h.chargeDistance=h.chargeWindow=0;h.detourTarget=-1;
+                                    }
+                                }
                                 for(auto* g:{&a,&b}) {
                                     g->offsetX+=g->approachX;g->offsetZ+=g->approachZ;g->approachX=g->approachZ=0;
                                     g->approachSpeed=g->chargeDistance=g->chargeWindow=0;g->detourTarget=-1;g->routeAlongX=alongX;
@@ -306,7 +351,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 for (unsigned id = 0; id < 25; ++id) if (relief.corridorGroups & (1u << id)) {
                     const auto& g = f.organization.smallGroups[id];
                     if (g.routed || g.strength <= 0) continue;
-                    positioned &= (relief.alongX ? g.offsetZ : g.offsetX) == (relief.phase == 4 ? relief.corridorShift : 0);
+                    positioned &= (relief.alongX ? g.offsetZ : g.offsetX) == relief.corridorOrigin[id]+(relief.phase == 4 ? relief.corridorShift : 0);
                 }
                 if (positioned && relief.phase == 4) relief.phase = 0;
                 else if (positioned && relief.phase == 5) {
@@ -335,7 +380,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                         g->offsetZ=destination.z-(static_cast<float>(g->slot/5)-2)*5.2f;
                         g->route=SmallGroupRoute::None;
                     }
-                    a.resting=true;relief={};
+                    a.resting=true;
+                    if(relief.corridorGroups)relief.phase=5;else relief={};
                 }
                 continue;
             }
@@ -647,7 +693,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 const auto& relief = *reservation;
                 displacedRelief=relief.displaced;
                 float targetForward = forward, targetLateral = lateral;
-                if (relief.displaced) {
+                if (relief.displaced && g.route!=SmallGroupRoute::ReliefCorridor) {
+                    if(relief.phase>=4)continue;
                     Point target = g.route==SmallGroupRoute::ReliefWithdraw ? (relief.phase>=1?relief.rear:relief.head) :
                         (relief.phase>=2?relief.head:relief.rear);
                     if(g.route==SmallGroupRoute::ReliefReserve && relief.phase<3) {
@@ -657,7 +704,7 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                     const float z=target.z-(static_cast<float>(g.slot/5)-2)*5.2f;
                     targetForward=routeX?x:z;targetLateral=routeX?z:x;
                 } else if (g.route == SmallGroupRoute::ReliefCorridor) {
-                    const float desired = relief.phase == 5 ? 0 : relief.corridorShift;
+                    const float desired = relief.corridorOrigin[id]+(relief.phase == 5 ? 0 : relief.corridorShift);
                     bool precedingReady = true;
                     for (unsigned other = 0; other < 25; ++other) if (relief.corridorGroups & (1u << other)) {
                         const auto& h = f.organization.smallGroups[other];
@@ -665,7 +712,8 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                         const unsigned column = routeX ? h.slot / 5 : h.slot % 5;
                         const bool outside = relief.corridorShift < 0 ? column < lane : column > lane;
                         const bool inside = relief.corridorShift < 0 ? column > lane : column < lane;
-                        if ((relief.phase == 5 ? inside : outside) && (routeX ? h.offsetZ : h.offsetX) != desired) precedingReady = false;
+                        const float otherDesired=relief.corridorOrigin[other]+(relief.phase==5?0:relief.corridorShift);
+                        if ((relief.phase == 5 ? inside : outside) && (routeX ? h.offsetZ : h.offsetX) != otherDesired) precedingReady = false;
                     }
                     if (precedingReady) targetLateral = desired;
                 } else if (g.route == SmallGroupRoute::ReliefWithdraw) {
