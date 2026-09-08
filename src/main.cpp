@@ -232,6 +232,14 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             if (wparam == '2') state->requestedSoldiers = 5000;
             if (wparam == '3') state->requestedSoldiers = 10000;
             if (!(lparam & (1LL << 30))) {
+                if(wparam==VK_F9) {
+                    wchar_t executable[32768]{};
+                    const auto length=GetModuleFileNameW(nullptr,executable,32768);
+                    if(length>0 && length<32768 && reinterpret_cast<INT_PTR>(ShellExecuteW(window,L"open",executable,L"--sekigahara",nullptr,SW_SHOWNORMAL))>32) {
+                        state->simulation.running=false;
+                        if(state->audio)state->audio->silence();
+                    } else MessageBoxW(window,L"関ヶ原の布陣画面を開けませんでした。",L"関ヶ原",MB_OK|MB_ICONERROR);
+                }
                 if (wparam == VK_F5) state->audioSettings.selectNext();
                 if (wparam == VK_OEM_PLUS || wparam == VK_ADD) state->audioSettings.adjust(1);
                 if (wparam == VK_OEM_MINUS || wparam == VK_SUBTRACT) state->audioSettings.adjust(-1);
@@ -700,7 +708,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                         state.audioSettings.selected == AudioBus::Environment ? L"環境 " : L"効果音 ") +
                     std::to_wstring(state.audioSettings.percent[static_cast<unsigned>(state.audioSettings.selected)]) + L"%]" +
                     (state.audioSaveFailed ? L" 音量保存失敗" : L"") +
-                    L" | 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 F7:刀戦闘 F8:槍・刀・弓・騎馬混成 M:消音 F5:音量対象 +/-:調整";
+                    L" | F9:関ヶ原の布陣 左:選択 右:移動 H:停止 Space:再生/停止 Q/E:回転 Home:リセット F2:素材 F3:歩行/攻撃 F4:兵種 F6:隊列 F7:刀戦闘 F8:槍・刀・弓・騎馬混成 M:消音 F5:音量対象 +/-:調整";
                 const auto drillTitle=std::wstring(L"隊列確認 | ")+unitVisual(state.unit).name+
                     (state.drill.running?L" 進行中":L" 一時停止")+L" | 4列×6段・24体 | 隊列ずれ "+std::to_wstring(state.drill.error())+
                     L" | 右クリック:移動 Space:再生/停止 H:その場で整列 Home:初期化 F4:兵種 F6:素材へ F7:刀戦闘 | 黄点:持ち場 水色:目的地";

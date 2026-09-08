@@ -85,8 +85,8 @@ struct Demo {
         auto box=[&](RECT r,COLORREF c) {auto b=CreateSolidBrush(c);FillRect(dc,&r,b);DeleteObject(b);};
         auto button=[&](int x,int w,const std::wstring& name) {box({x,22,x+w,60},RGB(43,56,63));text(x+12,30,w-20,26,name,normal);};
         text(24,15,282,35,L"関ヶ原  /  1600",heading);
-        text(25,52,290,24,L"史実再生 · 通説に基づく概略デモ",smallFont,RGB(180,173,142));
-        button(320,122,player.playing?L"一時停止":L"再生する");button(450,112,L"最初に戻る");
+        text(25,52,290,24,player.minute==scenario.startMinute && !player.playing?L"初期布陣を観察 · 通説に基づく模式図":L"史実再生 · 通説に基づく概略デモ",smallFont,RGB(180,173,142));
+        button(320,122,player.playing?L"一時停止":L"経過を再生");button(450,112,L"布陣へ戻る");
         button(570,120,std::to_wstring(static_cast<int>(player.speed))+L" 分 / 秒");button(698,130,arrows?L"進軍矢印 ON":L"進軍矢印 OFF");button(836,114,L"全景へ");
         button(width-170,150,L"戦闘試作へ");
         button(width-328,150,L"兵種を見る");
