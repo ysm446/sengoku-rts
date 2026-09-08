@@ -1,11 +1,13 @@
 #include "historical_scene.h"
+#include "historical_deployment.h"
 #include <windows.h>
 #include <stdexcept>
 
 namespace {
 constexpr unsigned soldiers = 72, trail = 180, ring = 32, front = 16;
 constexpr unsigned leaders = 12;
-constexpr unsigned stride = soldiers + trail + ring + front + leaders + 1;
+constexpr unsigned sparks = 25*5;
+constexpr unsigned stride = soldiers + trail + ring + front + leaders + sparks + 1;
 DirectX::XMFLOAT3 color(history::Side side) {
     return side == history::Side::East ? DirectX::XMFLOAT3{0.28f,0.64f,1.0f} :
         side == history::Side::West ? DirectX::XMFLOAT3{1.0f,0.34f,0.30f} : DirectX::XMFLOAT3{1.0f,0.8f,0.25f};
@@ -87,7 +89,10 @@ HistoricalScene::HistoricalScene(const history::Scenario& scenario, const SceneO
     scene.soldierCount=static_cast<unsigned>(scenario.armies.size())*soldiers;
     update(scenario,scenario.startMinute,Camera{},-1,true);
 }
-void HistoricalScene::update(const history::Scenario& scenario,double minute,const Camera& camera,int selected,bool arrows) {
+void HistoricalScene::update(const history::Scenario& scenario,double minute,const Camera& camera,int selected,bool arrows,const std::vector<history::Pose>& poses,const std::vector<BattlePoint>& goals,const FormationWorld* world) {
+    if(!poses.empty() && poses.size()!=scenario.armies.size())throw std::invalid_argument("Deployment pose count mismatch");
+    if(!goals.empty() && goals.size()!=scenario.armies.size())throw std::invalid_argument("Deployment goal count mismatch");
+    const auto sample=[&](unsigned id){return poses.empty()?history::sample(scenario.armies[id],minute):poses[id];};
     for(std::size_t i=armyStart;i<scene.sprites.size();++i) scene.sprites[i]={{0,0,0},{0,0},13,{1,1,1}};
     std::vector<DirectX::XMFLOAT2> occupiedLabels;
     const auto right=camera.right(), up=camera.up();
@@ -96,14 +101,16 @@ void HistoricalScene::update(const history::Scenario& scenario,double minute,con
         occupiedLabels.push_back({h.x*right.x+z*right.z,h.x*up.x+y*up.y+z*up.z});
     }
     for(unsigned i=0;i<scenario.armies.size();++i) {
-        const auto& army=scenario.armies[i]; const auto p=history::sample(army,minute);
+        const auto& army=scenario.armies[i]; const auto p=sample(i);
         const auto tint=color(p.side); const auto base=armyStart+i*stride;
+        const Formation* formation=nullptr;
+        if(world)for(const auto& entry:world->formations)if(entry.id==i)formation=&entry.formation;
         float heading=p.heading, reach=1.4f;
         if(p.action==history::Action::Fighting) {
             float nearest=10;
             for(unsigned opponent=0;opponent<scenario.armies.size();++opponent) {
                 if(opponent==i)continue;
-                const auto other=history::sample(scenario.armies[opponent],minute);
+                const auto other=sample(opponent);
                 if((p.side==history::Side::West)==(other.side==history::Side::West) || other.action!=history::Action::Fighting)continue;
                 const float distance=std::hypot(other.x-p.x,other.z-p.z);
                 if(distance<nearest && distance>.1f) {nearest=distance;heading=std::atan2(other.z-p.z,other.x-p.x);reach=std::clamp(distance*.5f-.25f,1.4f,4.5f);}
@@ -117,19 +124,44 @@ void HistoricalScene::update(const history::Scenario& scenario,double minute,con
             for(unsigned j=0;j<soldiers;++j) {
                 const float across=(static_cast<float>(j%12)-5.5f)*.42f, depth=-1+static_cast<float>(j/12)/5*(reach+1);
                 const float spread=p.action==history::Action::Retreating?1.5f:1.0f;
-                const float x=p.x+(-dz*across+dx*depth)*spread, z=p.z+(dx*across+dz*depth)*spread;
-                unsigned tile=scene.generatedSoldiers?4+camera.spriteDirection(heading):0;
-                if(p.moving && scene.animatedSoldiers) tile+=12*(1+(static_cast<unsigned>(minute*8)+j/12)%8);
-                else if(p.action==history::Action::Fighting && j/12==5 && scene.attackSoldiers)
+                float x=p.x+(-dz*across+dx*depth)*spread, z=p.z+(dx*across+dz*depth)*spread;
+                float soldierHeading=heading;bool attacking=p.action==history::Action::Fighting && j/12==5;
+                if(formation) {
+                    const unsigned id=j%25,ordinal=j/25,capacity=(soldiers-1-id)/25+1;
+                    const auto& group=formation->organization.smallGroups[id];
+                    if(ordinal>=std::ceil(capacity*std::clamp(group.strength/std::max(1u,group.nominalStrength),0.0f,1.0f)))continue;
+                    const auto point=formation->groupPosition(id);
+                    x=point.x/deploymentScale+(static_cast<float>(ordinal)-1)*.25f;z=point.z/deploymentScale;
+                    soldierHeading=group.heading;attacking=group.canAttack;
+                }
+                unsigned tile=scene.generatedSoldiers?4+camera.spriteDirection(soldierHeading):0;
+                if(p.moving && !attacking && scene.animatedSoldiers) tile+=12*(1+(static_cast<unsigned>(minute*8)+j/12)%8);
+                else if(attacking && scene.attackSoldiers)
                     tile+=12*(Scene::attackRow+(static_cast<unsigned>(minute*6)+j)%8);
                 scene.sprites[base+j]={{x,history::height(scenario,x,z)+.08f,z},{1.2f,1.5f},tile,tint};
             }
-            for(unsigned j=0;j<front;++j) {
+            for(unsigned j=0;!world && j<front;++j) {
                 const float across=(static_cast<float>(j)-7.5f)*.4f;
                 dot(soldiers+trail+ring+j,p.x-dz*across+dx*reach,p.z+dx*across+dz*reach,.65f,tint);
             }
         }
+        if(world)for(const auto& impact:world->impacts)if(impact.victim.formation==i && impact.victim.group<25) {
+            const double age=world->time-impact.time;if(age<0 || age>=CombatImpact::lifetime)continue;
+            const float fade=1-static_cast<float>(age/CombatImpact::lifetime);
+            for(unsigned ray=0;ray<5;++ray) {
+                const float angle=DirectX::XM_2PI*ray/5, radius=(1-fade)*.6f;
+                const float x=impact.position.x/deploymentScale+std::cos(angle)*radius,z=impact.position.z/deploymentScale+std::sin(angle)*radius;
+                scene.sprites[base+soldiers+trail+ring+front+leaders+impact.victim.group*5+ray]=
+                    {{x,history::height(scenario,x,z)+.65f,z},{.45f*fade,.45f*fade},12,{1,.8f,.3f}};
+            }
+        }
         // 移動履歴を固定数の点へサンプリング。過去の部分ほど暗くする。
+        if(!goals.empty() && selected==static_cast<int>(i) && std::hypot(goals[i].x-p.x,goals[i].z-p.z)>.05f) {
+            for(unsigned j=0;j<16;++j) {
+                const float angle=DirectX::XM_2PI*j/16;
+                dot(soldiers+j,goals[i].x+std::cos(angle)*1.4f,goals[i].z+std::sin(angle)*1.4f,.6f,{1,.9f,.25f});
+            }
+        }
         if(arrows) {
             std::vector<DirectX::XMFLOAT2> path;
             for(const auto& key:army.route) {

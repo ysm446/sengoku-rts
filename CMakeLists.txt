@@ -10,11 +10,12 @@ configure_file(src/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/app.rc" PROPERTIES
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/sengoku-rts-v2.ico")
 
-add_library(sengoku_scene src/scene.cpp src/sprite_sheet.cpp src/simulation.cpp src/soldier_visuals.cpp src/audio.cpp src/historical_scenario.cpp src/historical_scene.cpp)
+add_library(sengoku_scene src/scene.cpp src/sprite_sheet.cpp src/simulation.cpp src/formation_world.cpp src/world_melee.cpp src/soldier_visuals.cpp src/audio.cpp src/historical_scenario.cpp src/historical_scene.cpp)
 target_link_libraries(sengoku_scene PUBLIC windowscodecs ole32 xaudio2 gdi32)
 target_include_directories(sengoku_scene PUBLIC src)
 target_compile_features(sengoku_scene PUBLIC cxx_std_20)
 target_compile_definitions(sengoku_scene PUBLIC UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+
 
 add_executable(sengoku_rts WIN32 src/main.cpp src/renderer.cpp src/historical_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
 target_link_libraries(sengoku_rts PRIVATE sengoku_scene d3d12 dxgi d3dcompiler shell32)
@@ -63,6 +64,9 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(formation_world_tests tests/formation_world_tests.cpp)
+    target_link_libraries(formation_world_tests PRIVATE sengoku_scene)
+    add_test(NAME formation_world COMMAND formation_world_tests)
     add_executable(mixed_battle_tests tests/mixed_battle_tests.cpp)
     target_link_libraries(mixed_battle_tests PRIVATE sengoku_scene)
     add_test(NAME mixed_battle_endurance COMMAND mixed_battle_tests)
