@@ -82,6 +82,52 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--combat-report") { combatReport(); return 0; }
         if (argc != 1) throw std::runtime_error("Usage: central_relief_tests [--combat-report]");
+        for(bool axis:{false,true})for(float sign:{-1.0f,1.0f})for(unsigned team:{0u,1u}) {
+            auto battle=std::make_unique<BattleSimulation>(fixture(axis,sign,team,2,false));
+            auto& f=battle->formations[team];const unsigned front=slot(axis,sign>0?4:0,2),reserve=slot(axis,2,2);
+            for(unsigned id=0;id<25;++id)if(id!=front && id!=reserve) {
+                f.organization.smallGroups[id].offsetZ=1000;f.organization.smallGroups[id].fatigue=5;
+            }
+            auto& a=f.organization.smallGroups[front];auto& b=f.organization.smallGroups[reserve];
+            const auto head=f.groupPosition(front),rear=f.groupPosition(reserve);
+            auto archer=std::make_unique<BattleSimulation>(*battle);
+            archer->formations[team].organization.smallGroups[reserve].unit=UnitType::Archer;archer->update(1.0f/60);
+            require(archer->formations[team].organization.frontReliefs[3].front<0,"Archer was taken as an alternative melee reserve");
+            auto blocked=std::make_unique<BattleSimulation>(*battle);
+            const unsigned obstacle=slot(axis,sign>0?3:1,2);
+            auto& blocker=blocked->formations[team].organization.smallGroups[obstacle];
+            blocker.offsetZ=0;blocker.fatigue=5;
+            blocked->update(1.0f/60);
+            require(blocked->formations[team].organization.frontReliefs[3].front<0,"Alternative exchange ignored an occupied withdrawal path");
+            const auto company=a.company;bool completed=false;
+            for(unsigned tick=0;tick<2400;++tick) {
+                const auto p=f.groupPosition(front),q=f.groupPosition(reserve);
+                for(auto& g:battle->formations[1-team].organization.smallGroups)g.faceDeployment={};
+                battle->update(1.0f/60);
+                if(tick==0) {
+                    require(f.organization.frontReliefs[3].reserve==static_cast<int>(reserve),"Alternative reserve was not selected");
+                    auto held=std::make_unique<BattleSimulation>(*battle);held->hold(team);held->update(.1f);
+                    require(battleDistance(held->formations[team].groupPosition(reserve),f.groupPosition(reserve))==0,"Hold moved alternative reserve");
+                    auto paused=std::make_unique<BattleSimulation>(*battle);paused->running=false;paused->update(1);
+                    require(battleDistance(paused->formations[team].groupPosition(front),f.groupPosition(front))==0,"Pause moved alternative front");
+                    auto interrupted=std::make_unique<BattleSimulation>(*battle);
+                    interrupted->formations[team].organization.smallGroups[reserve].morale=10;interrupted->update(1.0f/60);
+                    require(interrupted->formations[team].organization.frontReliefs[3].front<0,"Alternative reserve rout retained reservation");
+                }
+                require(battleDistance(p,f.groupPosition(front))<=f.speed/60+.001f && battleDistance(q,f.groupPosition(reserve))<=f.speed/60+.001f,
+                    "Alternative exchange teleported");
+                for(unsigned id:{front,reserve})for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
+                    if(t==team && id==other)continue;
+                    require(battleDistance(f.groupPosition(id),battle->formations[t].groupPosition(other))>=4.5f,"Alternative exchange crossed occupancy");
+                }
+                if(a.slot==reserve && b.slot==front) {
+                    require(a.resting && a.company==company && battleDistance(f.groupPosition(front),rear)<.001f &&
+                        battleDistance(f.groupPosition(reserve),head)<.001f,"Alternative exchange lost position, identity or rest");
+                    completed=true;break;
+                }
+            }
+            require(completed,"Alternative reserve exchange did not complete");
+        }
         for(bool axis:{false,true})for(float sign:{-1.0f,1.0f})for(unsigned team:{0u,1u})for(bool gap:{true,false}) {
             auto moved=std::make_unique<BattleSimulation>(fixture(axis,sign,team,2,gap));
             const unsigned front=slot(axis,sign>0?4:0,2),rear=slot(axis,sign>0?3:1,2);

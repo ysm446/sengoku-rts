@@ -428,6 +428,55 @@ void BattleSimulation::updateSmallGroups(float seconds) {
                 }
             }
         }
+        // 直後の予備で予約できなかった場合、近い非交戦の予備から空き経路を探す。
+        if(contact && f.maneuverEnabled && !std::any_of(f.organization.frontReliefs.begin(),f.organization.frontReliefs.end(),
+            [](const FrontRelief& r){return r.front>=0;})) {
+            for(unsigned index=0;index<5;++index) {
+                const unsigned lane=index<2?index*4:index-1,rank=sign>0?4:0;
+                const unsigned frontSlot=alongX?lane*5+rank:rank*5+lane;
+                int front=-1;
+                for(unsigned id=0;id<25;++id)if(f.organization.smallGroups[id].slot==frontSlot)front=id;
+                if(front<0)continue;
+                auto& a=f.organization.smallGroups[front];
+                if(a.routed || a.resting || a.strength<=0 || a.route!=SmallGroupRoute::None || a.cavalry.phase!=CavalryPhase::None ||
+                    !(a.fatigue>=8 || a.strength<=a.nominalStrength*.75f || a.morale<=50))continue;
+                const auto head=positions[team][front];const float clearance=4.5f+3*movementLimit*seconds;
+                std::array<unsigned,25> candidates{};for(unsigned id=0;id<25;++id)candidates[id]=id;
+                std::stable_sort(candidates.begin(),candidates.end(),[&](unsigned x,unsigned y){
+                    return battleDistance(head,positions[team][x])<battleDistance(head,positions[team][y]);});
+                for(unsigned reserve:candidates) {
+                    auto& b=f.organization.smallGroups[reserve];const auto rear=positions[team][reserve];
+                    if(reserve==static_cast<unsigned>(front) || (alongX?b.slot%5:b.slot/5)==rank || b.routed || b.resting || b.canAttack ||
+                        b.route!=SmallGroupRoute::None || b.cavalry.phase!=CavalryPhase::None || b.fatigue>2 ||
+                        b.strength<=b.nominalStrength*.5f || b.morale<=40 || f.groupUnit(reserve)==UnitType::Archer ||
+                        (alongX?head.x-rear.x:head.z-rear.z)*sign<clearance || battleDistance(head,rear)>16)continue;
+                    const auto clear=[&](Point from,Point to,Point stationary) {
+                        if(std::abs(to.x)>76 || std::abs(to.z)>76 || segmentDistance(from,to,stationary)<clearance)return false;
+                        for(unsigned t=0;t<2;++t)for(unsigned other=0;other<25;++other) {
+                            if((t==team && (other==static_cast<unsigned>(front) || other==reserve)) ||
+                                formations[t].organization.smallGroups[other].strength<=0)continue;
+                            if(segmentDistance(from,to,positions[t][other])<clearance)return false;
+                        }
+                        return true;
+                    };
+                    const float preferred=(lane<=2?-1.0f:1.0f)*(index<2?6.1f:5.2f);
+                    for(float side:{preferred,-preferred}) {
+                        const Point headSide{head.x+(alongX?0:side),head.z+(alongX?side:0)};
+                        const Point rearSide{rear.x+(alongX?0:side),rear.z+(alongX?side:0)};
+                        if(!clear(rear,rearSide,head) || !clear(head,rear,rearSide) || !clear(rearSide,headSide,rear) || !clear(headSide,head,rear))continue;
+                        auto& r=f.organization.frontReliefs[index];r={front,static_cast<int>(reserve),0,alongX,sign*5.2f,side};r.displaced=true;
+                        r.head={head.x-f.x,head.z-f.z};r.rear={rear.x-f.x,rear.z-f.z};
+                        for(auto* g:{&a,&b}) {
+                            g->offsetX+=g->approachX;g->offsetZ+=g->approachZ;g->approachX=g->approachZ=0;
+                            g->approachSpeed=g->chargeDistance=g->chargeWindow=0;g->detourTarget=-1;g->routeAlongX=alongX;
+                        }
+                        a.route=SmallGroupRoute::ReliefWithdraw;b.route=SmallGroupRoute::ReliefReserve;break;
+                    }
+                    if(f.organization.frontReliefs[index].front>=0)break;
+                }
+                if(f.organization.frontReliefs[index].front>=0)break;
+            }
+        }
         const auto reservedForCentralRelief = [&](unsigned id, Point point) {
             for (unsigned index = 0; index < f.organization.frontReliefs.size(); ++index) {
                 const auto& r = f.organization.frontReliefs[index];
